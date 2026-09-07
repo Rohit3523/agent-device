@@ -3,6 +3,7 @@ import type { DeviceInfo } from '@agent-device/kernel/device';
 import { parsePermissionAction, parsePermissionTarget } from '@agent-device/contracts/settings';
 import type { SettingOptions } from '@agent-device/contracts/settings';
 import { runAndroidAdb } from './adb.ts';
+import { androidAdbResultError } from './adb-failure.ts';
 import {
   parseAndroidPackagePermissions,
   readAndroidCurrentUserId,
@@ -149,6 +150,8 @@ export async function setAndroidPermission(
  * stopping the sequence — while an explicit target for the same id still
  * fails loudly. Anything the dump does not list is never attempted, which is
  * what keeps `pm` from throwing "has not requested permission" partway.
+ * Operational failures (offline device, dropped transport) abort the fan-out
+ * instead of becoming skips, so launchApp cannot continue half-applied.
  */
 async function setAllAndroidPermissions(
   device: DeviceInfo,
@@ -314,7 +317,31 @@ async function tryPmUnit(
     { allowFailure: true },
   );
   if (result.exitCode === 0) return { ok: true };
-  return { ok: false, reason: firstStderrLine(result.stderr) };
+  if (isSkippablePmStderr(result.stderr)) {
+    return { ok: false, reason: firstStderrLine(result.stderr) };
+  }
+  throw androidAdbResultError(
+    `Failed to ${pmAction} Android permission ${permission} for ${appPackage}`,
+    result,
+    { appPackage, permission },
+  );
+}
+
+/**
+ * Only established non-changeable signals are skipped under `all`: an install
+ * permission `pm` cannot touch, an id the package never requested, or a name
+ * the runtime does not know as a runtime permission. Anything else (offline
+ * device, dropped transport, denied op) is operational and must abort the
+ * fan-out rather than let launchApp continue with half-applied permissions.
+ */
+function isSkippablePmStderr(stderr: string): boolean {
+  const text = stderr.toLowerCase();
+  return (
+    text.includes('not a changeable permission') ||
+    text.includes('has not requested permission') ||
+    text.includes('is not a runtime permission') ||
+    text.includes('unknown permission')
+  );
 }
 
 async function tryPhotosUnit(
@@ -325,9 +352,22 @@ async function tryPhotosUnit(
 ): Promise<string | undefined> {
   try {
     return await setAndroidPhotoPermission(device, appPackage, pmAction, userArgs);
-  } catch {
-    return undefined;
+  } catch (error) {
+    if (isSkippablePhotosError(error)) return undefined;
+    throw error;
   }
+}
+
+/** A photos probe failure is skippable only when every candidate was refused as non-changeable. */
+function isSkippablePhotosError(error: unknown): boolean {
+  if (!(error instanceof AppError) || error.code !== 'COMMAND_FAILED') return false;
+  const attempts = error.details?.attempts;
+  if (!Array.isArray(attempts) || attempts.length === 0) return false;
+  return attempts.every(
+    (attempt) =>
+      typeof (attempt as { stderr?: unknown }).stderr === 'string' &&
+      isSkippablePmStderr((attempt as { stderr: string }).stderr),
+  );
 }
 
 function firstStderrLine(stderr: string): string {

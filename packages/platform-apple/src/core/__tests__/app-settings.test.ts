@@ -455,21 +455,35 @@ test('setIosSetting permission rejects mode for non-photos target', async () => 
   );
 });
 
-test('setIosSetting permission reset notifications falls back to reset all when direct reset is blocked', async () => {
+test('setIosSetting permission reset notifications fails targeted when direct reset is blocked', async () => {
+  // A listed-but-blocked notifications service must not fall back to `reset
+  // all`: a notifications-only reset would clear microphone, location, and
+  // other grants. The targeted reset fails instead, leaving the earlier grant
+  // in place.
   await withFakeAppleTool(
     (args) => {
       if (isSimctlListDevices(args)) return BOOTED_SIM_LIST_JSON;
       if (args[0] === 'simctl' && args[1] === 'privacy' && args[2] === 'help') return undefined;
+      if (args.join(' ') === 'simctl privacy sim-1 grant microphone com.example.app') return '';
       if (args.join(' ') === 'simctl privacy sim-1 reset notifications com.example.app') {
         return { stderr: 'Failed to reset access\nOperation not permitted', exitCode: 1 };
       }
-      if (args.join(' ') === 'simctl privacy sim-1 reset all com.example.app') return '';
       return unexpectedArgs(args);
     },
     async ({ calls }) => {
-      await setIosSetting(IOS_TEST_SIMULATOR, 'permission', 'reset', 'com.example.app', {
-        permissionTarget: 'notifications',
+      await setIosSetting(IOS_TEST_SIMULATOR, 'permission', 'grant', 'com.example.app', {
+        permissionTarget: 'microphone',
       });
+      await assertRejectsAppError(
+        () =>
+          setIosSetting(IOS_TEST_SIMULATOR, 'permission', 'reset', 'com.example.app', {
+            permissionTarget: 'notifications',
+          }),
+        {
+          code: 'UNSUPPORTED_OPERATION',
+          message: /does not support resetting notifications permission/i,
+        },
+      );
       const flat = calls.map((args) => args.join(' '));
       assert.equal(
         flat.includes('simctl privacy sim-1 reset notifications com.example.app'),
@@ -477,7 +491,12 @@ test('setIosSetting permission reset notifications falls back to reset all when 
         flat.join('; '),
       );
       assert.equal(
-        flat.includes('simctl privacy sim-1 reset all com.example.app'),
+        flat.some((line) => line.includes('reset all com.example.app')),
+        false,
+        flat.join('; '),
+      );
+      assert.equal(
+        flat.includes('simctl privacy sim-1 grant microphone com.example.app'),
         true,
         flat.join('; '),
       );

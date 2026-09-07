@@ -454,3 +454,69 @@ test.each([
     },
   );
 });
+
+// An operational pm failure mid-`all` aborts instead of being skipped: an
+// offline device must not let launchApp continue with half-applied permissions.
+test('setAndroidSetting permission grant all propagates an operational pm failure', async () => {
+  await withFakeAdb(
+    fakeAdb((flat) => {
+      if (flat === CURRENT_USER) return '0';
+      if (flat === DUMPSYS) return dumpsysWithRequested();
+      if (flat === 'shell pm grant --user 0 com.example.app android.permission.RECORD_AUDIO') {
+        return { stderr: 'device offline', exitCode: 1 };
+      }
+      return undefined;
+    }),
+    async ({ device }) => {
+      await assertRejectsAppError(
+        () =>
+          setAndroidSetting(device, 'permission', 'grant', 'com.example.app', {
+            permissionTarget: 'all',
+          }),
+        { code: 'COMMAND_FAILED', message: /Failed to grant Android permission.*RECORD_AUDIO/ },
+      );
+    },
+  );
+});
+
+// A photos probe that fails operationally (not as non-changeable) aborts `all`
+// rather than collapsing into a skip warning.
+test('setAndroidSetting permission grant all propagates an operational photos failure', async () => {
+  const requested = [
+    'Packages:',
+    '  Package [com.example.app] (abc):',
+    '    requested permissions:',
+    '      android.permission.READ_MEDIA_IMAGES',
+    '    User 0: ceDataInode=0 installed=true',
+    '      runtime permissions:',
+    '        android.permission.READ_MEDIA_IMAGES: granted=false',
+    'Queries:',
+  ].join('\n');
+  await withFakeAdb(
+    fakeAdb((flat) => {
+      if (flat === 'shell getprop ro.build.version.sdk') return '36';
+      if (flat === CURRENT_USER) return '0';
+      if (flat === DUMPSYS) return requested;
+      if (
+        flat.startsWith('shell pm grant --user 0 com.example.app android.permission.READ_MEDIA')
+      ) {
+        return { stderr: 'device offline', exitCode: 1 };
+      }
+      if (
+        flat.startsWith('shell pm grant --user 0 com.example.app android.permission.READ_EXTERNAL')
+      ) {
+        return { stderr: 'device offline', exitCode: 1 };
+      }
+      return undefined;
+    }),
+    async ({ device }) => {
+      await assertRejectsAppError(
+        () =>
+          setAndroidSetting(device, 'permission', 'grant', 'com.example.app', {
+            permissionTarget: 'all',
+          }),
+        { code: 'COMMAND_FAILED', message: /Failed to grant Android photos permission/ },
+      );
+    },
+  );
+});
