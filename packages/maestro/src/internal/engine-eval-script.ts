@@ -1,4 +1,3 @@
-import vm from 'node:vm';
 import { AppError, errorMessage } from '@agent-device/kernel/errors';
 
 const MAESTRO_EVAL_SCRIPT_TIMEOUT_MS = 10_000;
@@ -10,12 +9,14 @@ const UNSAFE_OUTPUT_SEGMENTS = new Set(['__proto__', 'constructor', 'prototype']
 // folds the assigned `output` object back into string leaves that the flat-key
 // interpolator can read — `${output.uppercaseName}` and `${output.list.length}`
 // both resolve, which is the same surface the corpus flow exercises.
-export function evaluateMaestroEvalScript(
+export async function evaluateMaestroEvalScript(
   script: string,
   values: Readonly<Record<string, string>>,
-): Record<string, string> {
+): Promise<Record<string, string>> {
   const output = seedMaestroOutput(values);
   const expression = unwrapMaestroEvalScriptExpression(script);
+  // ponytail: function-scoped import keeps node:vm out of the maestro eager closure.
+  const { default: vm } = await import('node:vm');
   try {
     vm.runInNewContext(
       expression,

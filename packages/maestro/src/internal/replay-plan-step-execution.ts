@@ -7,7 +7,6 @@ import {
   type MaestroCompatibilityTimingPolicy,
 } from './compatibility-policy.ts';
 import type { MaestroExecutionContext } from './engine-context.ts';
-import { evaluateMaestroEvalScript } from './engine-eval-script.ts';
 import {
   checkpointMaestroCancellation,
   observationConditions,
@@ -112,6 +111,8 @@ async function executeEvalScript(
   command: Extract<MaestroRuntimeCommand, { kind: 'evalScript' }>,
   state: MaestroReplayPlanExecutionState,
 ): Promise<undefined> {
+  // ponytail: function-scoped import keeps engine-eval-script (and node:vm) out of the maestro eager closure.
+  const { evaluateMaestroEvalScript } = await import('./engine-eval-script.ts');
   if (state.options.trustedScripts === false) {
     throw new AppError(
       'UNAUTHORIZED',
@@ -119,7 +120,7 @@ async function executeEvalScript(
         'node:vm is not a security sandbox, so an untrusted expression can escape to the host.',
     );
   }
-  const outputEnv = evaluateMaestroEvalScript(command.script, state.context.values);
+  const outputEnv = await evaluateMaestroEvalScript(command.script, state.context.values);
   state.context.replaceOutput(outputEnv);
   state.executed += 1;
   return undefined;

@@ -47,6 +47,7 @@ function validMaestroCommand(pick: number, salt: number): string[] {
     () => ['- scrollUntilVisible:', '    element:', `        text: ${text}`],
     () => ['- repeat:', '    times: 2', '    commands:', '      - back'],
     () => ['- runFlow: other.yaml'],
+    () => [`- evalScript: ${text}`],
   ];
   return options[pick % options.length]!();
 }
@@ -54,7 +55,6 @@ function validMaestroCommand(pick: number, salt: number): string[] {
 const FAKE_MAESTRO_COMMANDS = [
   'clickOn',
   'tapOnPoint',
-  'evalScript',
   'launchActivity',
   'inputTextt',
 ] as const;
