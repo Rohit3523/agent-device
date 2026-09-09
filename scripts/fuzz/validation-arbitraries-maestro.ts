@@ -52,12 +52,7 @@ function validMaestroCommand(pick: number, salt: number): string[] {
   return options[pick % options.length]!();
 }
 
-const FAKE_MAESTRO_COMMANDS = [
-  'clickOn',
-  'tapOnPoint',
-  'launchActivity',
-  'inputTextt',
-] as const;
+const FAKE_MAESTRO_COMMANDS = ['clickOn', 'tapOnPoint', 'launchActivity', 'inputTextt'] as const;
 
 /** `code` is per class, like the CLI table: a class whose contract changes moves alone. */
 type MaestroMutation = { name: string; code: string; lines: (salt: number) => string[] };

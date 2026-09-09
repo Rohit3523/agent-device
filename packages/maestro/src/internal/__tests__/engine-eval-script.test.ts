@@ -5,7 +5,9 @@ import { evaluateMaestroEvalScript } from '../engine-eval-script.ts';
 describe('evaluateMaestroEvalScript', () => {
   test('evaluates a ${...} expression with env and output leaves bound', async () => {
     assert.deepEqual(
-      await evaluateMaestroEvalScript('${output.upper = MY_NAME.toUpperCase()}', { MY_NAME: 'John' }),
+      await evaluateMaestroEvalScript('${output.upper = MY_NAME.toUpperCase()}', {
+        MY_NAME: 'John',
+      }),
       { 'output.upper': 'JOHN' },
     );
   });
@@ -44,7 +46,10 @@ describe('evaluateMaestroEvalScript', () => {
 
   test('drops unsafe output segments and survives self-references', async () => {
     assert.deepEqual(
-      await evaluateMaestroEvalScript('${output.__proto__ = 1; output.a = output; output.b = 2}', {}),
+      await evaluateMaestroEvalScript(
+        '${output.__proto__ = 1; output.a = output; output.b = 2}',
+        {},
+      ),
       { 'output.b': '2' },
     );
   });
