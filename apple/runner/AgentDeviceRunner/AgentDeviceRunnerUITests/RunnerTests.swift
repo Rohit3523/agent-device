@@ -66,7 +66,11 @@ final class RunnerTests: XCTestCase {
   let minRecordingFps = 1
   let maxRecordingFps = 120
   var needsPostSnapshotInteractionDelay = false
-  var needsFirstInteractionDelay = false
+  /// When the first interaction after an activation may run, on the monotonic uptime clock.
+  /// The guarantee is a minimum gap *since the activation*, not a pause at the interaction:
+  /// a caller that already spent that gap elsewhere (an agent's round trip is 190-260 ms)
+  /// has satisfied it and waits for nothing. `nil` = no activation is pending stabilization.
+  var firstInteractionReadyUptime: TimeInterval?
   var runnerAccessibilityHealth: RunnerAccessibilityHealth = .unknown
   var activeRecording: ScreenRecorder?
   let commandJournal = RunnerCommandJournal()
@@ -139,6 +143,8 @@ final class RunnerTests: XCTestCase {
   // The injection records a real XCTIssue AFTER the real gesture, so
   // `xctestRecordedFailureResponse` and target invalidation fire byte-for-byte
   // like a field failure. Production builds compile none of this.
+  var textInputProbeIssueForTesting: XCTIssue?
+
   static let injectedTapFailureFlagPathForTesting =
     "/tmp/agent-device-inject-tap-recorded-failure-for-testing"
 
@@ -178,6 +184,7 @@ final class RunnerTests: XCTestCase {
   #endif
   // Observability for the record(_:) suppression below: how many AX-broken-screen snapshot
   // issues this session muted, so wedge investigations see the volume without grepping logs.
+  var textInputProbeIssues: TextInputProbeIssues?
   let suppressedIssueLock = NSLock()
   var suppressedAxSnapshotIssueCount = 0
   // Keep blocker actions narrow to avoid false positives from generic hittable containers.
@@ -217,6 +224,7 @@ final class RunnerTests: XCTestCase {
   /// outcomes stay honest through their own error paths — only this issue side-channel is
   /// muted. Everything else still records (and still drives XCTEST_RECORDED_FAILURE).
   override func record(_ issue: XCTIssue) {
+    if containTextInputProbeIssue(issue) { return }
     let description = issue.compactDescription
     if Self.isSuppressedAxSnapshotIssueDescription(description) {
       suppressedIssueLock.lock()

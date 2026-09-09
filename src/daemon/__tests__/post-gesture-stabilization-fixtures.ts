@@ -1,5 +1,5 @@
 import { ANDROID_EMULATOR, IOS_SIMULATOR } from '../../__tests__/test-utils/device-fixtures.ts';
-import { makeSnapshotState } from '../../__tests__/test-utils/snapshot-builders.ts';
+import { makeSnapshotState } from '@agent-device/selectors/snapshot-geometry-fixtures';
 import type { SessionState } from '../session-state.ts';
 
 /**
@@ -118,7 +118,7 @@ export function applicationRootNode() {
  * `[Keyboard]` container PLUS a sibling "Next keyboard" assistant button
  * under the SAME window — a container-descendant-only walk provably misses
  * the sibling (see `collectKeyboardChrome`'s doc comment in
- * src/core/snapshot-chrome.ts, the source of truth this fixture's shape is
+ * packages/capture-kit/src/snapshot-chrome.ts, the source of truth this fixture's shape is
  * drawn from: "a SIBLING subtree holding the 'Next keyboard' and 'Dictate'
  * buttons — siblings of the container, so a container-descendant walk alone
  * provably misses them"). Neither entry is the container itself, so sharing

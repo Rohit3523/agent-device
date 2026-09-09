@@ -36,6 +36,10 @@
       "types": "./src/android-system-chrome.ts",
       "default": "./src/android-system-chrome.ts"
     },
+    "./android-system-surface-disclosure": {
+      "types": "./src/android-system-surface-disclosure.ts",
+      "default": "./src/android-system-surface-disclosure.ts"
+    },
     "./app-deployment-runtime": {
       "types": "./src/app-deployment-runtime.ts",
       "default": "./src/app-deployment-runtime.ts"
@@ -67,6 +71,10 @@
     "./apple-runner-request": {
       "types": "./src/apple-runner-request.ts",
       "default": "./src/apple-runner-request.ts"
+    },
+    "./apple-session-observation": {
+      "types": "./src/apple-session-observation.ts",
+      "default": "./src/apple-session-observation.ts"
     },
     "./application-lifecycle-interaction": {
       "types": "./src/application-lifecycle-interaction.ts",
@@ -248,6 +256,10 @@
       "types": "./src/keyboard-runtime.ts",
       "default": "./src/keyboard-runtime.ts"
     },
+    "./lease-scope": {
+      "types": "./src/lease-scope.ts",
+      "default": "./src/lease-scope.ts"
+    },
     "./local-interactor-operation-set": {
       "types": "./src/local-interactor-operation-set.ts",
       "default": "./src/local-interactor-operation-set.ts"
@@ -327,6 +339,10 @@
     "./platform-runtime-unavailable": {
       "types": "./src/platform-runtime-unavailable.ts",
       "default": "./src/platform-runtime-unavailable.ts"
+    },
+    "./runtime-operation-names": {
+      "types": "./src/runtime-operation-names.ts",
+      "default": "./src/runtime-operation-names.ts"
     },
     "./progress": {
       "types": "./src/facades/progress.ts",

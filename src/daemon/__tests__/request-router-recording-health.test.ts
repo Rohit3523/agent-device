@@ -4,12 +4,12 @@ import { test, expect, vi, beforeEach } from 'vitest';
 import os from 'node:os';
 import path from 'node:path';
 
-vi.mock('@agent-device/platform-apple/runner/operations', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@agent-device/platform-apple/runner/operations')>()),
-  getRunnerSessionSnapshot: vi.fn(),
+vi.mock('../../platform-runtime-apple-resources.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../platform-runtime-apple-resources.ts')>()),
+  appleSessionObservation: { observeRunnerSession: vi.fn() },
 }));
 
-import { getRunnerSessionSnapshot } from '@agent-device/platform-apple/runner/operations';
+import { appleSessionObservation } from '../../platform-runtime-apple-resources.ts';
 import {
   createRequestHandler,
   gestureDeviceRuntimeGateway,
@@ -20,13 +20,13 @@ import { LeaseRegistry } from '../lease-registry.ts';
 import { makeSessionStore } from '../../__tests__/test-utils/store-factory.ts';
 import { makeTestScreenRecordingResource } from '../../__tests__/test-utils/screen-recording-live-handle.ts';
 
-const mockGetRunnerSessionSnapshot = vi.mocked(getRunnerSessionSnapshot);
+const mockObserveRunnerSession = vi.mocked(appleSessionObservation.observeRunnerSession);
 
 beforeEach(() => {
   legacyDispatchCapture.mockReset();
   legacyDispatchCapture.mockResolvedValue({});
   for (const spy of Object.values(gestureRuntimeSpies)) spy.mockClear();
-  mockGetRunnerSessionSnapshot.mockReset();
+  mockObserveRunnerSession.mockReset();
 });
 
 test('router blocks non-record commands when recording was invalidated', async () => {
@@ -104,7 +104,7 @@ test('router allows canonical iOS simulator gestures during overlay recording af
     runnerSessionId: 'runner-before',
   });
   sessionStore.set('default', session);
-  mockGetRunnerSessionSnapshot.mockResolvedValue({
+  mockObserveRunnerSession.mockResolvedValue({
     alive: true,
     sessionId: 'runner-after',
   });
@@ -128,7 +128,7 @@ test('router allows canonical iOS simulator gestures during overlay recording af
   });
 
   expect(response.ok).toBe(true);
-  expect(mockGetRunnerSessionSnapshot).not.toHaveBeenCalled();
+  expect(mockObserveRunnerSession).not.toHaveBeenCalled();
   expect(gestureRuntimeSpies.gestureViewport).toHaveBeenCalledOnce();
   expect(gestureRuntimeSpies.performMultiTouchGesturePlan).toHaveBeenCalledOnce();
   const recording = sessionStore.get('default')?.screenRecording?.handle.inspect();

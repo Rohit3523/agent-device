@@ -4,11 +4,12 @@ import {
   hasRuntimeTransportHintValues,
 } from '@agent-device/contracts/application-lifecycle-runtime';
 import { AppError, asAppError } from '@agent-device/kernel/errors';
+import { isSessionRuntimePlatform } from '@agent-device/kernel/contracts';
 import { publicPlatformString, type DeviceInfo } from '@agent-device/kernel/device';
 import type { DaemonRequest } from './daemon-request.ts';
 import type { SessionRuntimeHints, SessionState } from './session-state.ts';
 import { SessionStore } from './session-store.ts';
-import { trimRuntimeValue } from '../core/runtime-transport-hints.ts';
+import { trimRuntimeValue } from '@agent-device/host-kit/runtime-transport-hints';
 import { isAndroidEmulator, isIosSimulator } from './device-targets.ts';
 import { errorResponse, type DaemonFailureResponse } from './response.ts';
 
@@ -87,10 +88,10 @@ function normalizeRuntimePlatformInput(
   platform?: RuntimePlatform,
 ): RuntimePlatform | undefined {
   if (value === undefined) return platform;
-  if (value !== 'ios' && value !== 'android') {
+  if (!isSessionRuntimePlatform(value)) {
     throw new AppError(
       'INVALID_ARGS',
-      `Invalid open runtime platform: ${String(value)}. Use "ios" or "android".`,
+      `Invalid open runtime platform: ${String(value)}. Use "ios", "android", or "harmonyos".`,
     );
   }
   if (platform && value !== platform) {
@@ -105,7 +106,7 @@ function normalizeRuntimePlatformInput(
 export function toRuntimePlatform(
   platform: CommandFlags['platform'] | DeviceInfo['platform'] | 'apple' | undefined,
 ): RuntimePlatform | undefined {
-  if (platform === 'ios' || platform === 'android') {
+  if (isSessionRuntimePlatform(platform)) {
     return platform;
   }
   return undefined;
@@ -216,7 +217,7 @@ function resolveSessionRuntimeHints(
   if (runtime.platform && device && !deviceRuntimePlatform) {
     throw new AppError(
       'INVALID_ARGS',
-      `Session runtime hints are only supported on iOS and Android sessions, but session "${sessionName}" is bound to ${boundPlatform}.`,
+      `Session runtime hints are only supported on iOS, Android, and HarmonyOS sessions, but session "${sessionName}" is bound to ${boundPlatform}.`,
     );
   }
   if (runtime.platform && deviceRuntimePlatform && runtime.platform !== deviceRuntimePlatform) {

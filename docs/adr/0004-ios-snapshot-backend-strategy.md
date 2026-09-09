@@ -171,6 +171,22 @@ they run a short XCTest probe instead of the full tree slice so healthy screens 
 repeating the hostile-screen grind. The raw diagnostic plan is exempt — it keeps tree-first error
 propagation.
 
+## Recovery conformance and depth hints
+
+The host AX bridge and the XCTest runner's private AX bridge recover rejected deep requests with
+different native representations, ladders, and completeness evidence, and they stay separate
+implementations. `contracts/fixtures/ios-ax-recovery-conformance.json` is their shared, executable
+recovery contract: each producer replays every case through its own adapter, and the fixture
+records per-producer expectations plus the intentional differences, so a change to either recovery
+path is measured against the same synthetic native world. Common executable policy is extracted only
+where the fixture proves equivalence; a shared engine is not a goal.
+
+The host source additionally keeps a bounded accepted-depth hint per resolved target generation
+and producer. It changes only the native levels the first request asks for, is learned only from a
+finished recovery that observed a rejection, expires by hinted-capture count so ordinary screens
+probe back to the full depth, and is never shared across apps, generations, or producers. The
+route's generation circuit remains the only lifecycle owner.
+
 ## Consequences
 
 Regular snapshots remain the right tool for agents and Maestro compatibility because they describe

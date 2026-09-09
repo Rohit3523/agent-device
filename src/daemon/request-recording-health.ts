@@ -1,5 +1,5 @@
 import { isIosFamily } from '@agent-device/kernel/device';
-import { inspectAppleRunnerSession } from '../platform-runtime-apple-resources.ts';
+import { appleSessionObservation } from '../platform-runtime-apple-resources.ts';
 import type { SessionState } from './session-state.ts';
 
 export async function refreshRecordingHealth(session: SessionState): Promise<void> {
@@ -9,7 +9,7 @@ export async function refreshRecordingHealth(session: SessionState): Promise<voi
   const recording = session.screenRecording!.handle;
   const state = recording.inspect();
 
-  const snapshot = await inspectAppleRunnerSession(session.device.id);
+  const snapshot = await appleSessionObservation.observeRunnerSession(session.device.id);
   if (!state.runnerSessionId) {
     if (snapshot?.alive) {
       recording.setRunnerSessionId(snapshot.sessionId);

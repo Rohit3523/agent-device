@@ -6,7 +6,7 @@ import {
 import {
   markSelectionBootOccurred,
   type DeviceSelectionResult,
-} from '../../../core/device-selection-resolver.ts';
+} from '@agent-device/device-selection/device-selection-resolver';
 import type { BoundDeviceRuntime } from '@agent-device/contracts/platform-runtime';
 import type { SessionSurface } from '@agent-device/contracts/session';
 import type { DeviceInfo } from '@agent-device/kernel/device';
@@ -19,11 +19,11 @@ import {
 } from '../../session-script-publication-capability.ts';
 import { isRequestCanceled } from '@agent-device/host-kit/request';
 import { createRequestCanceledError } from '@agent-device/kernel/errors';
+import { SessionStore } from '../../session-store.ts';
 import {
   resolveSessionRequestLogPath,
   resolveSessionRunnerLogPath,
-  SessionStore,
-} from '../../session-store.ts';
+} from '../../session-artifact-paths.ts';
 import {
   countConfiguredRuntimeHints,
   runtimeHintValues,

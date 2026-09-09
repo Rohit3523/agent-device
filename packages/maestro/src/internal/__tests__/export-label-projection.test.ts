@@ -18,7 +18,7 @@ test('projects native label selectors to text with a warning and self-parses', (
 
   expect(parseAllDocuments(result.yaml).map((document) => document.toJSON())).toEqual([
     { appId: 'com.example.app' },
-    ['launchApp', { tapOn: { text: 'Save' } }],
+    [{ launchApp: { appId: 'com.example.app' } }, { tapOn: { text: 'Save' } }],
   ]);
   expect(result.warnings).toEqual([
     {

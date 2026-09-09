@@ -25,8 +25,13 @@ export function createAndroidApplicationTools(): AndroidApplicationTools {
   return Object.freeze({
     resolveOpenTarget: async (device, input) => await resolveAndroidOpenTarget(device, input),
     inferOpenedAppBundleId: async (device, target, currentAppBundleId) => {
-      const { inferAndroidPackageAfterOpen } = await loadOpenTarget();
-      return await inferAndroidPackageAfterOpen(device, target, currentAppBundleId);
+      if (currentAppBundleId) return currentAppBundleId;
+      try {
+        const { inferAndroidPackageAfterOpen } = await loadAndroidMechanics();
+        return await inferAndroidPackageAfterOpen(device, target, currentAppBundleId);
+      } catch {
+        return currentAppBundleId;
+      }
     },
     resetFramePerfStats: async (device, appBundleId) => {
       const { resetAndroidFramePerfStats } = await loadAndroidMechanics();
@@ -96,14 +101,12 @@ async function resolveAndroidOpenTarget(
   device: DeviceInfo,
   input: OpenTargetResolutionInput,
 ): Promise<OpenTargetResolution> {
-  const { resolveAndroidPackageForOpen, resolveSessionAppBundleIdForTarget } =
-    await loadOpenTarget();
+  const { resolveSessionAppBundleIdForTarget } = await loadOpenTarget();
   return {
     appBundleId: await resolveSessionAppBundleIdForTarget(
       device,
       input.target,
       input.currentAppBundleId,
-      resolveAndroidPackageForOpen,
     ),
     appName: input.target,
   };

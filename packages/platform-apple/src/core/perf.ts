@@ -964,9 +964,15 @@ export async function readAppleProcessSamples(
   const result = isMacOs(device)
     ? await runAppleToolCommand('ps', args, { timeoutMs: APPLE_PERF_TIMEOUT_MS })
     : await runAppleSimulatorProcessCommand(args);
+  const { matchesAppleExecutableProcess } = await import('./perf-process-identity.ts');
   return parseApplePsOutput(result.stdout).filter((processInfo) =>
     matchesAppleExecutableProcess(processInfo.command, executable),
   );
+}
+
+function readProcessCommandToken(command: string): string {
+  const [token = ''] = command.trim().split(/\s+/, 1);
+  return token;
 }
 
 async function resolveAppleMemorySnapshotProcess(
@@ -1052,40 +1058,6 @@ async function runAppleSimulatorProcessCommand(args: string[]): Promise<ExecResu
   return await runAppleToolCommand('ps', ['-axo', 'pid=,%cpu=,rss=,command='], {
     timeoutMs: APPLE_PERF_TIMEOUT_MS,
   });
-}
-
-function matchesAppleExecutableProcess(
-  command: string,
-  executable: { executableName: string; executablePath?: string },
-): boolean {
-  const token = readProcessCommandToken(command);
-  if (executable.executablePath) {
-    for (const executablePath of buildAppleExecutablePathAliases(executable.executablePath)) {
-      if (
-        command === executablePath ||
-        token === executablePath ||
-        command.startsWith(`${executablePath} `)
-      ) {
-        return true;
-      }
-    }
-  }
-  return path.basename(token) === executable.executableName;
-}
-
-function buildAppleExecutablePathAliases(executablePath: string): string[] {
-  const aliases = [executablePath];
-  if (executablePath.startsWith('/private/var/')) {
-    aliases.push(executablePath.replace('/private/var/', '/var/'));
-  } else if (executablePath.startsWith('/var/')) {
-    aliases.push(executablePath.replace('/var/', '/private/var/'));
-  }
-  return aliases;
-}
-
-function readProcessCommandToken(command: string): string {
-  const [token = ''] = command.trim().split(/\s+/, 1);
-  return token;
 }
 
 function buildAppleMemoryPerfSample(args: {

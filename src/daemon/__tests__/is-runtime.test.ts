@@ -9,7 +9,7 @@ import {
 } from '../../__tests__/test-utils/session-factories.ts';
 import { makeSessionStore } from '../../__tests__/test-utils/store-factory.ts';
 import { withTestDeviceInventory } from '../../__tests__/test-utils/device-inventory-gateways.ts';
-import { makeSnapshotState } from '../../__tests__/test-utils/snapshot-builders.ts';
+import { makeSnapshotState } from '@agent-device/selectors/snapshot-geometry-fixtures';
 import type { DaemonRequest } from '../daemon-request.ts';
 import { selectorCaptureFixture } from './selector-capture-fixture.ts';
 
@@ -30,7 +30,7 @@ beforeEach(() => {
 
 // `is` answers every one of its eight predicates from the resolved capture — `isCommand` never
 // reaches `backend.readText`. So its whole platform execution is the request-bound capture, and
-// these cases bind at `inspectFacts` / `bindDevice`, never at `core/dispatch-resolve.ts`.
+// these cases bind at `inspectFacts` / `bindDevice`, never at `-device/device-selection/dispatch-resolve`.
 
 const unavailableCapture = { available: false, reason: 'unsupported-device-kind' } as const;
 const activeAppRequired = { available: false, reason: 'owner-capability-missing' } as const;

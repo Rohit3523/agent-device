@@ -13,8 +13,9 @@ vi.mock('node:timers/promises', async (importOriginal) => {
   return { ...actual, setTimeout: vi.fn(async () => undefined) };
 });
 
-vi.mock('../../../core/dispatch-resolve.ts', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../../core/dispatch-resolve.ts')>();
+vi.mock('@agent-device/device-selection/dispatch-resolve', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@agent-device/device-selection/dispatch-resolve')>();
   const { selectionFromResolveTargetDevice } =
     await import('../../__tests__/device-selection-stub.ts');
   const resolveTargetDevice = vi.fn();
@@ -67,16 +68,13 @@ vi.mock('@agent-device/platform-apple/app-resolution', async (importOriginal) =>
     resolveIosSimulatorDeepLinkBundleId: vi.fn(async () => undefined),
   };
 });
-vi.mock('../../../platform-runtime-open-target.ts', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../../platform-runtime-open-target.ts')>();
-  return { ...actual, resolveAndroidPackageForOpen: vi.fn(async () => undefined) };
-});
 vi.mock('@agent-device/platform-android/mechanics', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@agent-device/platform-android/mechanics')>();
   return {
     ...actual,
     activateAndroidTestIme: vi.fn(async () => ({ activated: false })),
     restoreAndroidTestIme: vi.fn(async () => ({ restored: false, reason: 'no-record' })),
+    resolveAndroidPackageForOpen: vi.fn(async () => undefined),
   };
 });
 vi.mock('@agent-device/host-kit/command', async (importOriginal) => {
@@ -93,7 +91,7 @@ import { cleanupRetainedMaterializedPathsForSession } from '../../materialized-p
 import { SessionStore } from '../../session-store.ts';
 import type { DaemonRequest, DaemonResponse } from '../../daemon-request.ts';
 import type { SessionState } from '../../session-state.ts';
-import { resolveTargetDevice } from '../../../core/dispatch-resolve.ts';
+import { resolveTargetDevice } from '@agent-device/device-selection/dispatch-resolve';
 import { ensureDeviceReady } from '../../device-ready.ts';
 import {
   applyRuntimeHintValues,
@@ -112,7 +110,7 @@ import {
   resolveIosApp,
   resolveIosSimulatorDeepLinkBundleId,
 } from '@agent-device/platform-apple/app-resolution';
-import { resolveAndroidPackageForOpen } from '../../../platform-runtime-open-target.ts';
+import { resolveAndroidPackageForOpen } from '@agent-device/platform-android/mechanics';
 import { runCmd } from '@agent-device/host-kit/command';
 import { dispatchApplicationLifecycleEffect } from '../../__tests__/application-lifecycle-runtime-fixture.ts';
 

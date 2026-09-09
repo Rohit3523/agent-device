@@ -10,41 +10,6 @@ import { loadAndroidMechanics } from './platform-runtime-android-mechanics.ts';
 
 const LINUX_SUPPORTED_SURFACES = new Set<SessionSurface>(['app', 'desktop', 'frontmost-app']);
 
-export type ResolvedForegroundIosApp = Readonly<{
-  device: DeviceInfo;
-  app: Readonly<{ bundleId: string }>;
-}>;
-
-/**
- * Read-only foreground discovery used solely to enrich a snapshot session-not-found hint. Actual
- * `open --foreground` target probing runs through the admitted Apple lifecycle binding instead.
- */
-export async function resolveSoleForegroundIosApp(
-  options: Readonly<{ simulatorSetPath?: string }> = {},
-): Promise<ResolvedForegroundIosApp | undefined> {
-  const { listLocalDeviceInventory, shouldPropagateDeviceInventoryProbeError } =
-    await import('./request/device-inventory-context.ts');
-  try {
-    const booted = await listLocalDeviceInventory({
-      platform: 'ios',
-      iosSimulatorSetPath: options.simulatorSetPath,
-      kind: 'simulator',
-      booted: true,
-    });
-    if (booted.length !== 1) return undefined;
-    const [soleBootedDevice] = booted;
-    if (!soleBootedDevice) return undefined;
-
-    const { detectSoleRunningIosSimulatorApp } =
-      await import('@agent-device/platform-apple/app-resolution');
-    const app = await detectSoleRunningIosSimulatorApp(soleBootedDevice);
-    return app ? { device: soleBootedDevice, app } : undefined;
-  } catch (error) {
-    if (shouldPropagateDeviceInventoryProbeError(error)) throw error;
-    return undefined;
-  }
-}
-
 /**
  * Platform-owned surface classification for open. Daemon handlers retain only the public
  * error-response construction and session-policy choice of an existing surface.
@@ -180,39 +145,6 @@ async function tryResolveIosAppBundleId(
   }
 }
 
-export async function resolveAndroidPackageForOpen(
-  device: DeviceInfo,
-  openTarget: string | undefined,
-): Promise<string | undefined> {
-  if (device.platform !== 'android' || !openTarget || isDeepLinkTarget(openTarget))
-    return undefined;
-  try {
-    const { resolveAndroidApp } = await loadAndroidMechanics();
-    const resolved = await resolveAndroidApp(device, openTarget);
-    return resolved.type === 'package' ? resolved.value : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-export async function inferAndroidPackageAfterOpen(
-  device: DeviceInfo,
-  openTarget: string | undefined,
-  currentAppBundleId: string | undefined,
-): Promise<string | undefined> {
-  if (currentAppBundleId) return currentAppBundleId;
-  if (device.platform !== 'android' || !openTarget || !isDeepLinkTarget(openTarget)) {
-    return currentAppBundleId;
-  }
-  try {
-    const { getAndroidAppState } = await loadAndroidMechanics();
-    const foreground = await getAndroidAppState(device);
-    return foreground.package?.trim() || currentAppBundleId;
-  } catch {
-    return currentAppBundleId;
-  }
-}
-
 function shouldPreserveAndroidPackageContext(
   device: DeviceInfo,
   openTarget: string | undefined,
@@ -231,17 +163,26 @@ export async function resolveSessionAppBundleIdForTarget(
   device: DeviceInfo,
   openTarget: string | undefined,
   currentAppBundleId: string | undefined,
-  resolveAndroidPackageForOpenFn: (
-    device: DeviceInfo,
-    openTarget: string | undefined,
-  ) => Promise<string | undefined>,
 ): Promise<string | undefined> {
   if (device.platform === 'harmonyos') {
     return bundleIdFromOpenTarget(openTarget) ?? currentAppBundleId;
   }
   return (
     (await resolveIosBundleIdForOpen(device, openTarget, currentAppBundleId)) ??
-    (await resolveAndroidPackageForOpenFn(device, openTarget)) ??
+    (await tryResolveAndroidPackageForOpen(device, openTarget)) ??
     (shouldPreserveAndroidPackageContext(device, openTarget) ? currentAppBundleId : undefined)
   );
+}
+
+async function tryResolveAndroidPackageForOpen(
+  device: DeviceInfo,
+  openTarget: string | undefined,
+): Promise<string | undefined> {
+  if (device.platform !== 'android' || !openTarget) return undefined;
+  try {
+    const { resolveAndroidPackageForOpen } = await loadAndroidMechanics();
+    return await resolveAndroidPackageForOpen(device, openTarget);
+  } catch {
+    return undefined;
+  }
 }

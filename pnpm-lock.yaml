@@ -32,6 +32,9 @@ importers:
       '@agent-device/contracts':
         specifier: workspace:*
         version: link:packages/contracts
+      '@agent-device/device-selection':
+        specifier: workspace:*
+        version: link:packages/device-selection
       '@agent-device/host-kit':
         specifier: workspace:*
         version: link:packages/host-kit
@@ -77,6 +80,9 @@ importers:
       '@agent-device/selectors':
         specifier: workspace:*
         version: link:packages/selectors
+      '@agent-device/session-journal':
+        specifier: workspace:*
+        version: link:packages/session-journal
       '@agent-device/xml':
         specifier: workspace:*
         version: link:packages/xml
@@ -228,12 +234,27 @@ importers:
       '@agent-device/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@agent-device/kernel':
+        specifier: workspace:*
+        version: link:../kernel
       '@agent-device/selectors':
         specifier: workspace:*
         version: link:../selectors
 
   packages/contracts:
     dependencies:
+      '@agent-device/kernel':
+        specifier: workspace:*
+        version: link:../kernel
+
+  packages/device-selection:
+    dependencies:
+      '@agent-device/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@agent-device/host-kit':
+        specifier: workspace:*
+        version: link:../host-kit
       '@agent-device/kernel':
         specifier: workspace:*
         version: link:../kernel
@@ -469,6 +490,9 @@ importers:
       '@agent-device/ad-script':
         specifier: workspace:*
         version: link:../ad-script
+      '@agent-device/capture-kit':
+        specifier: workspace:*
+        version: link:../capture-kit
       '@agent-device/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -479,6 +503,21 @@ importers:
       fast-check:
         specifier: ^4.9.0
         version: 4.9.0
+
+  packages/session-journal:
+    dependencies:
+      '@agent-device/command-registry':
+        specifier: workspace:*
+        version: link:../command-registry
+      '@agent-device/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@agent-device/host-kit':
+        specifier: workspace:*
+        version: link:../host-kit
+      '@agent-device/kernel':
+        specifier: workspace:*
+        version: link:../kernel
 
   packages/xml: {}
 

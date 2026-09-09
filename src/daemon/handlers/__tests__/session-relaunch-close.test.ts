@@ -27,6 +27,8 @@ vi.mock('@agent-device/platform-apple/runner/operations', async (importOriginal)
     prewarmAppleRunnerCache: vi.fn(),
     prewarmIosRunnerSession: vi.fn(),
     notifyIosRunnerAppRelaunched: vi.fn(async () => {}),
+    // A retained Simulator runner survives the relaunch, so its cached target is reset.
+    hasLiveIosRunnerSession: vi.fn(() => true),
     scheduleIosRunnerIdleStop: vi.fn(),
     stopIosRunnerSession: vi.fn(async () => {}),
   };
@@ -44,8 +46,8 @@ vi.mock('@agent-device/platform-apple/app-resolution', async (importOriginal) =>
     resolveIosSimulatorDeepLinkBundleId: vi.fn(async () => undefined),
   };
 });
-vi.mock('../../../platform-runtime-open-target.ts', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../../platform-runtime-open-target.ts')>();
+vi.mock('@agent-device/platform-android/mechanics', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@agent-device/platform-android/mechanics')>();
   return { ...actual, resolveAndroidPackageForOpen: vi.fn(async () => undefined) };
 });
 

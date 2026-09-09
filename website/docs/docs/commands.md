@@ -69,6 +69,7 @@ agent-device app-switcher
 - Android: add `--headless` to launch without opening a GUI window.
 - Android: `shutdown --platform android --device <avd-name>` stops a running emulator.
 - `open [app|url] [url]` already boots/activates the selected target when needed.
+- `open <app> --timeout <ms>` is a startup budget for that boot. A never-booted iOS Simulator runs Apple's first-boot migration, which can take several minutes; without the flag the boot wait is capped at 120 seconds. When the budget runs out the command fails with `error.details.reason: boot_timeout` and the Simulator keeps booting, so a retry finds it further along.
 - `open <url>` deep links are supported on Android and iOS.
 - `open <app> <url>` opens a deep link on iOS.
 - `open <app> --launch-console <path>` captures launch-time stdout/stderr for direct iOS simulator app launches. It is not valid for URL opens or
@@ -246,6 +247,7 @@ agent-device prepare ios-runner --platform ios --timeout 240000
 
 - `prepare ios-runner` is intended for Apple-platform CI setup before `snapshot`, `replay`, or `test`.
 - Run it after the simulator/device is booted and the app is installed, but before the first snapshot, replay, or test command.
+- `--timeout <ms>` is one budget shared by the Simulator boot (when the target is not booted yet) and the runner preparation; a never-booted Simulator's first-boot migration is bounded by it, not by the 120-second default boot wait.
 - It builds or reuses the local XCTest runner, starts a runner session, and verifies that the runner can answer a lightweight health command.
 - In JSON output, top-level `buildMs`, `connectMs`, and `healthCheckMs` are diagnostic fields and may overlap; use `timing.additiveParts` for additive wall-clock phase totals. `connectMs` contains `buildMs` when a runner artifact is built or rebuilt.
 - If health checking exposes a bad restored runner artifact, Agent Device marks that artifact bad and rebuilds once.
@@ -483,7 +485,8 @@ Target-authored drag is supported on Android touch devices and iOS/iPadOS. Backe
 `gesture transform` accepts `x y dx dy scale degrees [durationMs]` for one combined two-finger pan/zoom/rotate gesture on Android and iOS simulators. Pinch, rotate, two-finger pan, and transform use the same viewport-aware pointer planning; impossible paths fail before injection instead of clamping or distorting the requested motion.
 On iOS simulators it uses private XCTest synthesis for a continuous two-finger pan/scale/rotation path, so verify app-level metrics instead of assuming the requested values map exactly to recognizer output.
 On Android, `gesture transform` injects a geometric two-finger path. App recognizers may report non-exact pan, scale, and rotation values, so verify qualitative state such as `pan changed yes`, `pinch changed yes`, and `rotate changed yes` unless the app explicitly promises exact centroid metrics. If exact app-state values matter, prefer isolated `gesture pan`, `gesture pinch`, or `gesture rotate` commands.
-`scroll` accepts either a relative amount (`0.5` means a finger path spanning half of the viewport on that axis) or `--pixels <n>` for a fixed-distance gesture. The final content offset can differ because apps apply pan-recognition thresholds, collapsing headers, bounds, and their own scroll physics. Large distances are clamped to the usable drag band so the gesture stays reliable across Android, iOS, and macOS.
+`scroll` accepts either a relative amount (`0.5` means a finger path spanning half of the viewport on that axis) or `--pixels <n>` for a fixed-distance gesture. It releases with reduced momentum toward the requested distance, not an exact stop there — the final content offset can still differ because apps apply pan-recognition thresholds, collapsing headers, bounds, and their own scroll physics. Large distances are clamped to the usable drag band so the gesture stays reliable across Android, iOS, and macOS.
+On Android, a plain `scroll <direction>` releases in this reduced-momentum ("controlled") mode by default — it appends a short braking tail after the drag so the list does not fling past the requested distance — while `scroll top`/`scroll bottom` release inertially instead, coasting to the edge. That braking tail needs headroom within Android's 10000ms gesture ceiling, so a controlled scroll's own `--duration-ms` accepts at most 9840ms; a longer request is rejected with `INVALID_ARGS` rather than silently shortened or losing the braking tail.
 Default snapshot text output is visible-first, so off-screen interactive content is summarized instead of shown as tappable refs.
 When a target only appears in an off-screen summary, use `scroll <direction> --settle`: the response waits for the UI to go quiet and returns the diff against the tree you last observed, with fresh refs on the added lines, so no follow-up `snapshot -i` is needed. `back --settle` does the same for navigation. Both are best-effort and never fail the action. For repeated checks without settle, a small shell loop is enough:
 

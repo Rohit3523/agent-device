@@ -72,6 +72,10 @@
       "types": "./src/runner-owner-facade.ts",
       "default": "./src/runner-owner-facade.ts"
     },
+    "./session-observation": {
+      "types": "./src/session-observation.ts",
+      "default": "./src/session-observation.ts"
+    },
     "./simctl": {
       "types": "./src/simctl-facade.ts",
       "default": "./src/simctl-facade.ts"

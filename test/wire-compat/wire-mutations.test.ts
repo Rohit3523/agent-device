@@ -72,7 +72,7 @@ const MUTATIONS: readonly WireMutation[] = [
   },
   {
     breakClass: 'response parsing: the client narrows what a daemon may return',
-    file: 'src/daemon/client/daemon-client-rpc.ts',
+    file: 'src/daemon-client/daemon-client-rpc.ts',
     name: 'parseDaemonHttpResponseBody',
     from: 'error?: { message?: string; data?: Record<string, unknown> }',
     to: 'error?: { message: string }',
@@ -145,21 +145,21 @@ const MUTATIONS: readonly WireMutation[] = [
   // why claiming "both sides" required these to be listed and proved.
   {
     breakClass: 'health consumer: the client stops reading the advertised protocol version',
-    file: 'src/daemon/client/daemon-client-transport.ts',
-    name: 'readHealthPayload',
+    file: 'src/daemon-client/daemon-client-transport.ts',
+    name: 'readHealthLink',
     from: "typeof parsed.rpcProtocolVersion === 'number' ? parsed.rpcProtocolVersion : undefined",
     to: 'undefined',
   },
   {
     breakClass: 'health consumer: the mismatch refusal ADR 0006 built is weakened',
-    file: 'src/daemon/client/daemon-client-transport.ts',
+    file: 'src/daemon-client/daemon-client-transport.ts',
     name: 'readRemoteDaemonHealth',
-    from: 'health.rpcProtocolVersion !== DAEMON_RPC_PROTOCOL_VERSION',
+    from: 'link.rpcProtocolVersion !== DAEMON_RPC_PROTOCOL_VERSION',
     to: 'false',
   },
   {
     breakClass: 'health consumer: the parsed health shape drops a released field',
-    file: 'src/daemon/client/daemon-client-transport.ts',
+    file: 'src/daemon-client/daemon-client-transport.ts',
     name: 'RemoteDaemonHealth',
     from: 'rpcProtocolVersion?: number;',
     to: '',
@@ -307,9 +307,10 @@ const CLOSURE_PROBES: readonly { reachedFrom: string; omit: string }[] = [
     omit: 'packages/contracts/src/request-progress.ts#RequestProgressEvent',
   },
   {
-    // Plain relative import inside src/.
+    // Declaration moved into packages/contracts; the consumer reaches it through the
+    // package's exports map.
     reachedFrom: 'buildLeaseRpcParams',
-    omit: 'src/core/lease-scope.ts#LeaseRpcCommand',
+    omit: 'packages/contracts/src/lease-scope.ts#LeaseRpcCommand',
   },
   {
     // Workspace specifier resolved through the package's own exports map.

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added: `replay export` supports flows that switch apps and return, preserving each
+  `open <appId>` target as an explicit Maestro `launchApp.appId`.
+- Added: `replay export` converts recorded `home` actions to Maestro `pressKey: Home`, allowing
+  app-to-home-to-app journeys to be exported.
 - Added: polling `wait` timeouts (`wait <selector>`, `wait text`, `wait @ref`, and `wait absent`
   after a readable capture) carry a per-poll timeline in `error.details` (`captures`, `polls[]`
   with `startedMs`, `durationMs`, and a typed `outcome`: readable, unreadable, deadline,
@@ -9,6 +13,13 @@
   opening the request log. Long waits keep the first five and last twenty-five polls. The replay
   landmark-mismatch refusal carries the same poll evidence next to its mismatch details; `wait
   --stable` timeouts and a never-readable strict absence keep their existing diagnostics.
+- Fixed: Android `orientation` now returns once the display reports the requested rotation
+  (polling `dumpsys display`, up to 15s) instead of right after writing the settings. On a loaded
+  emulator the rotation takes seconds, during which accessibility reads hang, so the next command
+  paid for the transition; a `wait` issued right after `orientation` could spend its whole budget
+  there. A display that never reaches the requested rotation now fails the command with the
+  observed rotation instead of reporting success; a display that reports no rotation is left to
+  the setting as before.
 - Fixed: the iOS Simulator AX snapshot route bounds how long a capture waits for app discovery
   and stops starting a discovery per capture. Discovery (`simctl launchctl list` through xcrun)
   takes seconds on a loaded host; a capture now waits at most 1.5s for the one in-flight
@@ -37,6 +48,10 @@
   are unchanged at schema v2. Two notes for mixed installations: a daemon older than this release
   reads a v3 file as an unreadable claim record and fails closed rather than clearing it, and
   `devices` reports no `claimedBy` for such a device until the managed-inventory filter lands.
+- Added the `harmonyos-instance` lease contract and CLI/runtime plumbing as a prerequisite for
+  HarmonyOS proxy support; provider/daemon allocation remains gated until its end-to-end lifecycle
+  is implemented and validated (#2266).
+
 - Fixed: `settings airplane on|off` now takes an Android device offline. It is applied through
   the connectivity service (`cmd connectivity airplane-mode`), which drives the radios, instead of
   writing `airplane_mode_on` and broadcasting `ACTION_AIRPLANE_MODE_CHANGED` — a broadcast Android

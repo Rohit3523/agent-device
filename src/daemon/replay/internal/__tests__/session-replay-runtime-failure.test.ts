@@ -1,8 +1,9 @@
 import { test, expect, vi, beforeEach } from 'vitest';
 import { mkdtempForTestSync } from '../../../../__tests__/test-utils/tmp-dir.ts';
 
-vi.mock('../../../../core/dispatch-resolve.ts', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../../../core/dispatch-resolve.ts')>();
+vi.mock('@agent-device/device-selection/dispatch-resolve', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@agent-device/device-selection/dispatch-resolve')>();
   return { ...actual, resolveTargetDevice: vi.fn() };
 });
 vi.mock('../../../snapshot-interactor-capture.ts', () => ({
@@ -14,7 +15,7 @@ import { runReplayForTest } from '../../__tests__/replay-command-fixture.ts';
 import { SessionStore } from '../../../session-store.ts';
 import type { DaemonResponse } from '../../../daemon-request.ts';
 import { makeIosSession } from '../../../../__tests__/test-utils/session-factories.ts';
-import { formatReplayDivergenceReport } from '../../../../core/replay-divergence.ts';
+import { formatReplayDivergenceReport } from '@agent-device/ad-replay/divergence';
 import { maestroScriptSourceBundleFor } from '../../../../__tests__/test-utils/replay-script-source.ts';
 import {
   captureSnapshotThroughLegacyDispatchFixture,

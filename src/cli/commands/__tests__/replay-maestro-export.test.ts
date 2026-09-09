@@ -45,6 +45,24 @@ screenshot "./artifacts/checkout"
     ]);
   });
 
+  test('exports each app target when a script switches apps and returns', () => {
+    const result = exportReplayScriptToMaestro(`open com.example.shop
+open com.example.auth
+open com.example.shop
+`);
+
+    expect(() => inspectMaestroFlow(result.yaml, 'apps.yaml')).not.toThrow();
+    expect(parseYamlDocs(result.yaml)).toEqual([
+      { appId: 'com.example.shop' },
+      [
+        { launchApp: { appId: 'com.example.shop' } },
+        { launchApp: { appId: 'com.example.auth' } },
+        { launchApp: { appId: 'com.example.shop' } },
+      ],
+    ]);
+    expect(result.warnings).toEqual([]);
+  });
+
   test('exports the empty-fill clear as eraseText, never a vacuous inputText', () => {
     // `fill <target> ""` is the clear-field primitive (#2063); Maestro's `inputText: ""` types
     // nothing, so the recorded clear must become its clear verb.
@@ -54,7 +72,11 @@ fill id="email" ""
 `);
 
     const docs = parseYamlDocs(result.yaml);
-    expect(docs[1]).toEqual(['launchApp', { tapOn: { id: 'email' } }, 'eraseText']);
+    expect(docs[1]).toEqual([
+      { launchApp: { appId: 'com.example.app' } },
+      { tapOn: { id: 'email' } },
+      'eraseText',
+    ]);
     expect(result.warnings).toEqual([
       {
         line: 3,
@@ -75,7 +97,7 @@ wait 500
     expect(parseYamlDocs(result.yaml)).toEqual([
       { appId: 'com.example.app' },
       [
-        'launchApp',
+        { launchApp: { appId: 'com.example.app' } },
         { tapOn: { point: '120,240' } },
         { swipe: { start: '200,700', end: '200,200', duration: 100 } },
         { swipe: { start: '200,700', end: '200,200', duration: 100 } },
@@ -102,7 +124,7 @@ press text="Retry" --hold-ms 1500
     expect(parseYamlDocs(result.yaml)).toEqual([
       { appId: 'com.example.app' },
       [
-        'launchApp',
+        { launchApp: { appId: 'com.example.app' } },
         { longPressOn: { text: 'Last message' } },
         { longPressOn: { id: 'hold-button' } },
         { longPressOn: { text: 'Retry' } },
@@ -144,7 +166,11 @@ press text="Hold" --hold-ms 1000 --count 3 --interval-ms 150
 
     expect(parseYamlDocs(result.yaml)).toEqual([
       { appId: 'com.example.app' },
-      ['launchApp', { doubleTapOn: { id: 'retry' } }, { longPressOn: { text: 'Hold' } }],
+      [
+        { launchApp: { appId: 'com.example.app' } },
+        { doubleTapOn: { id: 'retry' } },
+        { longPressOn: { text: 'Hold' } },
+      ],
     ]);
     expect(result.warnings).toEqual([
       {

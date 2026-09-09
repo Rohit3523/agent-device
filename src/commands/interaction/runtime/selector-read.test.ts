@@ -9,7 +9,7 @@ import {
   type CommandSessionStore,
 } from '../../../runtime.ts';
 import { ref, selector } from './selector-read-utils.ts';
-import { makeSnapshotState } from '../../../__tests__/test-utils/snapshot-builders.ts';
+import { makeSnapshotState } from '@agent-device/selectors/snapshot-geometry-fixtures';
 import {
   createFakeClock,
   createSelectorDevice,

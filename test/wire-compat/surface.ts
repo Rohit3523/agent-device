@@ -48,12 +48,13 @@ const HTTP_SERVER = 'src/daemon/server/http-server.ts';
 const UPLOAD_HTTP = 'src/daemon/upload-http.ts';
 const ARTIFACT_HTTP = 'src/daemon/downloadable-artifact-http.ts';
 const REQUEST_DIAGNOSTICS_HTTP = 'src/daemon/request-diagnostics-http.ts';
+const SESSION_TENANT_SCOPE = 'src/daemon/session-tenant-scope.ts';
 const HTTP_REQUEST_TARGET = 'src/daemon/http-request-target.ts';
 const REMOTE_REQUEST_DIAGNOSTICS = 'src/remote/remote-request-diagnostics.ts';
 const PROGRESS_PROTOCOL = 'src/daemon/request-progress-protocol.ts';
-const CLIENT_RPC = 'src/daemon/client/daemon-client-rpc.ts';
-const CLIENT_PROGRESS = 'src/daemon/client/daemon-client-progress.ts';
-const CLIENT_TRANSPORT = 'src/daemon/client/daemon-client-transport.ts';
+const CLIENT_RPC = 'src/daemon-client/daemon-client-rpc.ts';
+const CLIENT_PROGRESS = 'src/daemon-client/daemon-client-progress.ts';
+const CLIENT_TRANSPORT = 'src/daemon-client/daemon-client-transport.ts';
 const UPLOAD_CLIENT = 'src/remote/upload-client.ts';
 const REMOTE_ARTIFACTS = 'src/remote/daemon-artifacts.ts';
 const ARTIFACT_DOWNLOAD = 'src/remote/artifact-download.ts';
@@ -106,7 +107,9 @@ export const WIRE_SURFACE: readonly WireSurfaceGroup[] = [
       ...from(
         CLIENT_TRANSPORT,
         'RemoteDaemonHealth',
+        'RemoteDaemonHealthLink',
         'readHealthPayload',
+        'readHealthLink',
         'readDaemonHttpHealth',
         'readRemoteDaemonHealth',
       ),
@@ -148,9 +151,16 @@ export const WIRE_SURFACE: readonly WireSurfaceGroup[] = [
       ...from(ARTIFACT_HTTP, 'DownloadableArtifactHttpAuthorizer'),
       // The diagnostics route's authorization: the same token/auth-hook gate as
       // the artifact routes, plus the tenant rule that decides which sessions a
-      // caller may read a record from (#1801).
+      // caller may read a record from (#1801). `isTenantAddressableSessionName`
+      // is that rule; the namespace it takes says whether the caller's sessions
+      // were partitioned at all, which is what the naming side keys off.
       ...from(REQUEST_DIAGNOSTICS_HTTP, 'RequestDiagnosticsHttpAuthorizer'),
-      ...from('src/daemon/session-tenant-scope.ts', 'isTenantOwnedSessionName'),
+      ...from(
+        SESSION_TENANT_SCOPE,
+        'TenantSessionNamespace',
+        'isTenantOwnedSessionName',
+        'isTenantAddressableSessionName',
+      ),
     ],
   },
   {
@@ -167,6 +177,8 @@ export const WIRE_SURFACE: readonly WireSurfaceGroup[] = [
         'DaemonRequest',
         'DaemonRequestMeta',
         'SessionRuntimeHints',
+        'SESSION_RUNTIME_PLATFORMS',
+        'SessionRuntimePlatform',
         'daemonRuntimeSchema',
         'DaemonInstallSource',
         'DAEMON_LOCK_POLICIES',
@@ -185,7 +197,7 @@ export const WIRE_SURFACE: readonly WireSurfaceGroup[] = [
       // `flags`/`input` bags, and ADR 0006 calls new flags additive.
       ...from('src/commands/cli-grammar/types.ts', 'DaemonCommandRequest'),
       // The lease method vocabulary the client and daemon must agree on.
-      ...from('src/core/lease-scope.ts', 'LeaseRpcCommand'),
+      ...from('packages/contracts/src/lease-scope.ts', 'LeaseRpcCommand'),
       // Producer side: the method vocabulary a released client sends, and the
       // projections that turn each method's params into a DaemonRequest.
       ...from(
