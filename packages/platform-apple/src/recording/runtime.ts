@@ -1,12 +1,15 @@
 import { isIosFamily, type DeviceInfo } from '@agent-device/kernel/device';
-import { asAppError } from '@agent-device/kernel/errors';
+import { AppError, asAppError } from '@agent-device/kernel/errors';
+import { execFailureDetails } from '@agent-device/host-kit/command';
 import type { CleanupOutcome } from '@agent-device/contracts/durable-resource';
+import type { HostCommandResult } from '@agent-device/contracts/platform-runtime-host';
 import type { RuntimeOwnerRef } from '@agent-device/contracts/platform-runtime';
 import type { ScreenRecordingRuntimeHost } from '@agent-device/contracts/screen-recording-runtime-host';
-import type {
-  ScreenRecordingLiveSnapshot,
-  ScreenRecordingRuntimeOperations,
-  ScreenRecordingStartInput,
+import {
+  RECORDING_OUTPUT_UNPLAYABLE_REASON,
+  type ScreenRecordingLiveSnapshot,
+  type ScreenRecordingRuntimeOperations,
+  type ScreenRecordingStartInput,
 } from '@agent-device/contracts/screen-recording-runtime';
 import { PendingTransferGuard } from '@agent-device/contracts/async-lifecycle';
 import { createScreenRecordingLiveHandle } from '@agent-device/capture-kit';
@@ -119,10 +122,22 @@ async function startAppleSimulatorRecording(params: AppleRecordingStartParams) {
       await nativeProcess.terminate();
       const result = await nativeProcess.wait;
       host.screenRecording.ownedProcesses.clear({ kind: 'session', sessionId: input.sessionId });
-      if (result.exitCode !== 0) {
-        throw new Error(`simctl recordVideo exited with code ${result.exitCode}`);
+      // An exited recorder is an observation about the recorder, not about the export: simctl wrote
+      // whatever it wrote, and the finalizer is what answers whether that is a video (ADR 0024 2.2).
+      // Refusing here by exit code alone threw away a finalized recording and left a retry that could
+      // only re-read the same settled exit, so the exit is disclosed and collection proceeds.
+      const exit = describeSimctlRecorderExit(result);
+      if (exit === undefined) return await completion(host, current, 'iOS recording');
+      try {
+        return await completion(
+          host,
+          current,
+          'iOS recording',
+          `${exit} before record stop; the video covers only what the recorder wrote before it stopped.`,
+        );
+      } catch (exportError) {
+        throw recorderExitEndedTheRecording(exportError, exit, result);
       }
-      return await completion(host, current, 'iOS recording');
     },
     cleanup: async () => {
       const result = await cleanupAppleSimulatorProcess(nativeProcess);
@@ -162,12 +177,19 @@ async function startAppleRunnerRecording(params: AppleRecordingStartParams) {
     runnerAuthority: result.runnerAuthority,
   } as const;
   let runnerStop: Promise<void> | undefined;
-  const stopRunner = () =>
-    (runnerStop ??= runAppleRecordingOperation(() =>
+  // A stop the runner refused has to be asked again by the next `record stop`, exactly as the live
+  // handle re-drives a refused finish; only an in-flight or completed stop stays shared.
+  const stopRunner = () => {
+    runnerStop ??= runAppleRecordingOperation(() =>
       host.screenRecording.apple
         .runRunner(device, { kind: 'stop', appBundleId, ...runnerOwnership })
         .then(() => undefined),
-    ));
+    ).catch((error: unknown) => {
+      runnerStop = undefined;
+      throw error;
+    });
+    return runnerStop;
+  };
   if (!runnerDescriptorMatchesDevice(device, result.remotePath)) {
     await stopRunner().catch(() => {});
     throw new Error('Apple runner recording did not expose coherent durable media ownership');
@@ -218,6 +240,41 @@ async function runAppleRecordingOperation<T>(operation: () => Promise<T>): Promi
   } catch (error) {
     throw asAppError(error, 'COMMAND_FAILED');
   }
+}
+
+function describeSimctlRecorderExit(result: HostCommandResult): string | undefined {
+  // A termination record stop asked for comes back with the signal still attached and the exit code
+  // normalized to 0 by the host, so checking the signal first would blame the recorder for our own
+  // SIGTERM escalation.
+  if (result.exitCode === 0) return undefined;
+  return result.signal
+    ? `simctl recordVideo was killed by ${result.signal}`
+    : `simctl recordVideo exited with code ${result.exitCode}`;
+}
+
+// An unreadable file is the one export failure the recorder's exit explains: the next `record stop`
+// re-reads the same settled exit and the same bytes, so it names the exit and the way out. Anything
+// else the export path raised keeps its own verdict — a telemetry or transport failure a retry can fix
+// must not be told to close the session.
+function recorderExitEndedTheRecording(
+  exportError: unknown,
+  exit: string,
+  result: HostCommandResult,
+): unknown {
+  const original = asAppError(exportError, 'COMMAND_FAILED');
+  if (original.details?.reason !== RECORDING_OUTPUT_UNPLAYABLE_REASON) return exportError;
+  return new AppError(
+    original.code,
+    `${original.message}; ${exit}`,
+    execFailureDetails(result, {
+      ...(original.details ?? {}),
+      ...(result.signal === undefined ? {} : { signal: result.signal }),
+      retriable: false,
+      hint:
+        'The recorder exited before record stop, so the next record stop reads the same file. ' +
+        'Close this session to release the device, then record again.',
+    }),
+  );
 }
 
 function runnerDescriptorMatchesDevice(
@@ -276,7 +333,6 @@ function snapshot(
   backend: string,
   timing: Readonly<{
     recorderStartUptimeMs?: number;
-    targetAppReadyUptimeMs?: number;
     runnerSessionId?: string;
   }> = {},
   clockAnchor?: Readonly<{ wallClockAtMs: number; uptimeMs: number }>,
@@ -306,9 +362,6 @@ function snapshot(
           gestureClockOriginUptimeMs: timing.recorderStartUptimeMs,
           runnerStartedAtUptimeMs: timing.recorderStartUptimeMs,
         }),
-    ...(timing.targetAppReadyUptimeMs === undefined
-      ? {}
-      : { targetAppReadyUptimeMs: timing.targetAppReadyUptimeMs }),
     ...(timing.runnerSessionId === undefined ? {} : { runnerSessionId: timing.runnerSessionId }),
   });
 }

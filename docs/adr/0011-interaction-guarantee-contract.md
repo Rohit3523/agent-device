@@ -260,6 +260,36 @@ classifier. Reads (`querySelector`, and so `get`/`is`/`wait`) keep the prior rul
 decorative duplicate into an error. Maestro's explicit expected-point /
 non-hittable compatibility path remains intentionally separate.
 
+### 2026-09-11 amendment: one collapse for one control, at both doors
+
+Two clauses of the amendment above went stale as the read paths moved, and the
+structural rule never reached the read door.
+
+- `querySelector` no longer backs `get`/`is`/`wait`. Those reads resolve against a
+  capture, through the `readUnique`/`readAny`/`readText` rows of
+  `packages/selectors/src/selector-pipeline.ts`, so the runner's hittable-preference
+  rule governs only the direct XCTest paths that still query it: the direct-iOS
+  touch fast path and the off-screen target probe.
+- A control reported through its own accessibility wrapper answers a selector
+  twice. A regular iOS snapshot omits unverified hittability, so the ladder that
+  relates a wrapper to its control cannot fire, and #2482 collapsed that chain for
+  mutating resolution only: `is visible` and `get attrs` refused the same screen
+  as ambiguous while `press` tapped it. The collapse now sits beside the
+  classification that asks for it (`resolveUnverifiedWrapperControl`) and applies
+  where a refusal was the answer: the uniqueness rows — `is <predicate>`,
+  `get attrs`, `screenshot --crop-on` — resolve the control instead of reporting
+  no match. A row that resolves before any refusal is untouched by it, and a
+  wrapper chain always resolves before one: depth separates a wrapper from its
+  control, so `get text` ranks onto the control and `wait`/`is exists` answer from
+  the document-order head without asking which element was meant. A candidate set
+  the rule does not recognize as one control — a cell and the button inside it, or
+  matches in distinct subtrees — still refuses.
+- Replay verifies a recorded target by resolving its recorded selector again under
+  the same row's refusal rules, so the screen dispatch had resolved read as an
+  identity mismatch on the step's first replay. Verification names the collapsed
+  control too, which is the node dispatch acted on and the node the recorded
+  identity carries.
+
 ### Synthesized iOS gesture policy
 
 Synthesized iOS gestures (`scroll`, synthesized coordinate `tap`, synthesized
@@ -326,3 +356,24 @@ Each step lands green and independently useful:
 - **More integration tests without the registry**: this is the status quo
   plus effort. Without the matrix as code, nothing forces a new path to
   acquire the existing suite, which is exactly how this week's bugs happened.
+
+### Optional observation before an iOS coordinate tap
+
+A coordinate tap must not depend on a preceding XCTest snapshot failure. Its
+optional text-input lookup may establish a concrete identity for a later bare
+`type`; an absent or unavailable lookup establishes no typing witness. A runner
+snapshot penalty can skip this work, but is only a performance optimization.
+
+The lookup owns a thread-bound issue scope in the runner recorder and returns a
+typed result. Any recorded issue, including one otherwise handled by AX suppression,
+discards partial candidates. The scope excludes gesture dispatch and required
+text-entry reads. Those failures retain the existing mutation-outcome rules.
+
+The iOS PR lane exercises a fresh runner with an unavailable probe, a suppressed
+AX issue with a matching candidate, healthy coordinate tap followed by typing,
+and failures outside the optional observation scope. These tests must not seed a
+snapshot penalty to make the first tap safe.
+
+The recorder consumes optional-read issues before forwarding to XCTest. XCTest's
+expected-failure API must not own this scope: in a long-lived command test it can
+complete the enclosing test even when the command response succeeds.

@@ -60,6 +60,7 @@ export function makeOperations(
     launchApp: noOp,
     stopApp: noOp,
     setPermissions: noOp,
+    clearState: noOp,
     openLink: noOp,
     tapOn: noOp,
     doubleTapOn: noOp,

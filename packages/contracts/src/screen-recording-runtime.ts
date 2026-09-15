@@ -9,6 +9,9 @@ import type { ResourceOwnershipFence } from './platform-runtime.ts';
 
 export const SCREEN_RECORDING_RESOURCE_KIND = 'screen-recording' as const;
 
+/** The recording's file exists and is not a video, which only a still-finalizing recorder can undo. */
+export const RECORDING_OUTPUT_UNPLAYABLE_REASON = 'recording-output-unplayable';
+
 type RecordingTelemetryBase = Readonly<{
   tMs: number;
   x: number;
@@ -72,7 +75,6 @@ export type ScreenRecordingLiveSnapshot = Readonly<{
   gestureClockOriginAtMs?: number;
   gestureClockOriginUptimeMs?: number;
   runnerStartedAtUptimeMs?: number;
-  targetAppReadyUptimeMs?: number;
   runnerSessionId?: string;
   invalidatedReason?: string;
 }>;
@@ -84,6 +86,13 @@ export type ScreenRecordingCompletion = Readonly<{
   clientOutPath?: string;
   startedAt: number;
   completedAt: number;
+  /**
+   * Duration the finished video timelines actually cover, when the backend can measure them. A
+   * backend that encodes only on screen changes can capture less video than the `startedAt` to
+   * `completedAt` window reports as the recording duration; a chunked recording sums its chunk
+   * timelines, which excludes whatever a chunk handover cost.
+   */
+  capturedDurationMs?: number;
   scope: RecordingScope;
   showTouches: boolean;
   recordOnlySession: boolean;

@@ -9,15 +9,17 @@ import { publicPlatformString } from '@agent-device/kernel/device';
 import {
   findNodeByRef,
   normalizeRef,
+  SNAPSHOT_CAPTURE_OPTION_KEYS,
+  snapshotOptionsFromFlags,
   type RawSnapshotNode,
-  type SnapshotStateProvenance,
+  type SnapshotCaptureProvenance,
   type SnapshotState,
 } from '@agent-device/kernel/snapshot';
-import { resolveRefLabel } from '../core/snapshot-node-lookup.ts';
+import { resolveRefLabel } from '@agent-device/capture-kit/snapshot-node-lookup';
 import { captureSnapshotWithInteractor } from './snapshot-interactor-capture.ts';
-import { buildSnapshotState } from '../core/snapshot-state.ts';
+import { buildSnapshotState } from '@agent-device/capture-kit/snapshot-state';
 import { clearAndroidSnapshotFreshness } from './session-snapshot-freshness.ts';
-import type { SnapshotFreshnessMode } from '../snapshot/snapshot-freshness/index.ts';
+import type { SnapshotFreshnessMode } from '@agent-device/capture-kit/snapshot-freshness';
 import { contextFromFlags } from './context.ts';
 import { resolveDeferredInteractionOutcome } from './deferred-interaction-outcome.ts';
 import { createInteractionRetryTap } from './interaction-retry-tap.ts';
@@ -55,7 +57,7 @@ type SnapshotData = {
   truncated?: boolean;
   quality?: unknown;
 } & Omit<SnapshotCaptureAnnotations, 'quality'> &
-  SnapshotStateProvenance;
+  SnapshotCaptureProvenance;
 
 type SnapshotAttempt = {
   data: SnapshotData;
@@ -115,14 +117,8 @@ export async function captureSnapshotData(params: CaptureSnapshotParams): Promis
     options: {
       appBundleId: context.appBundleId,
       signal: params.signal,
-      interactiveOnly: context.snapshotInteractiveOnly,
-      preferredBackend: context.snapshotPreferredBackend,
-      depth: context.snapshotDepth,
-      scope: context.snapshotScope,
-      raw: context.snapshotRaw,
-      customActions: context.snapshotCustomActions,
+      ...snapshotOptionsFromFlags(context, SNAPSHOT_CAPTURE_OPTION_KEYS),
       includeRects: params.includeRects,
-      includeHiddenContentHints: context.snapshotIncludeHiddenContentHints,
       surface: session?.surface,
     },
   });

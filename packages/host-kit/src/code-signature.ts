@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { findProjectRoot } from './version.ts';
+import { findProjectRoot, isSourceCheckoutProjectRoot } from './version.ts';
 
 // Any quoted, relative-path-shaped string literal is treated as a module
 // specifier, rather than matching the `import`/`export`/`from` grammar
@@ -61,6 +61,23 @@ export function resolveDaemonCodeSignature(): string {
   return computeDaemonCodeSignature(entryPath);
 }
 
+/**
+ * Which tree a daemon's code came from, and so what could have changed it since the
+ * version it reports.
+ *
+ * A signature only means something against a tree that can be re-read, so this answers
+ * first: two installed trees of one version hold the same artifact and have nothing to
+ * compare (#2458), while a checkout's code moves under a version that does not move
+ * with it. A running daemon publishes its own answer beside its signature
+ * (`src/daemon/server/server-lifecycle.ts`) because the question is about the code that
+ * is RUNNING, not only about the client asking it.
+ */
+export type DaemonCodeOrigin = 'installed' | 'checkout';
+
+export function resolveDaemonCodeOrigin(root: string = findProjectRoot()): DaemonCodeOrigin {
+  return isSourceCheckoutProjectRoot(root) ? 'checkout' : 'installed';
+}
+
 export function computeDaemonCodeSignature(
   entryPath: string,
   root: string = findProjectRoot(),
@@ -87,8 +104,8 @@ export function computeDaemonCodeSignature(
  * format guard relies on being inside the graph it walks.
  */
 export function walkDaemonCodeGraph(entryPath: string, root: string): DaemonCodeGraphWalk {
-  const normalizedRoot = path.resolve(root);
-  const queue = [path.resolve(entryPath)];
+  const normalizedRoot = resolveDaemonCodePath(root);
+  const queue = [resolveDaemonCodePath(entryPath)];
   const visited = new Set<string>();
   const files: DaemonCodeFileStamp[] = [];
   const absentPaths = new Set<string>();
@@ -176,6 +193,26 @@ export function buildDaemonCodeFileLabel(root: string, filePath: string): string
   return path.relative(path.resolve(root), resolvedPath) || resolvedPath;
 }
 
+/**
+ * A path with its symlinks resolved, falling back to a plain resolve for a
+ * path that names nothing yet.
+ *
+ * Every root, entry, and manifest a walk compares or labels goes through here,
+ * so all of them name a file the same way. Two spellings of one path is not a
+ * cosmetic difference: under a symlinked prefix — macOS `/tmp`, a symlinked
+ * checkout — a root left unresolved sits outside the resolved tree beneath it,
+ * so `buildDaemonCodeFileLabel` walks back out of the repository instead of
+ * naming `packages/kit/...` and `isInstalledDependencyPath` reads every
+ * installed dependency as a workspace package and walks its whole closure.
+ */
+export function resolveDaemonCodePath(filePath: string): string {
+  try {
+    return fs.realpathSync.native(filePath);
+  } catch {
+    return path.resolve(filePath);
+  }
+}
+
 /** The wire form of a signature; identical for a walked and a cache-validated stamp list. */
 export function formatDaemonCodeSignature(stamps: readonly DaemonCodeFileStamp[]): string {
   const fingerprint = stamps
@@ -244,25 +281,14 @@ function readWorkspacePackage(
     absentPaths.add(buildDaemonCodeFileLabel(root, linkedManifestPath));
     return null;
   }
-  const manifestPath = realManifestPath(linkedManifestPath);
+  // Both routes to the manifest name the same inode, so stamping it under the
+  // package's own path keeps one label per file rather than one per route.
+  const manifestPath = resolveDaemonCodePath(linkedManifestPath);
   if (isInstalledDependencyPath(root, manifestPath)) return null;
   try {
     return { manifestPath, manifest: JSON.parse(fs.readFileSync(manifestPath, 'utf8')) };
   } catch {
     return null;
-  }
-}
-
-/**
- * The manifest's own path, so a package reached through its workspace link is
- * stamped under one label. Both routes name the same inode, so either would
- * revalidate; two labels for one file would just inflate every document.
- */
-function realManifestPath(manifestPath: string): string {
-  try {
-    return fs.realpathSync.native(manifestPath);
-  } catch {
-    return manifestPath;
   }
 }
 

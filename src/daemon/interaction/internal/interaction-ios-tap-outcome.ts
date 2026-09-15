@@ -6,7 +6,7 @@ import {
   isSparseSnapshotQualityVerdict,
   preferredSnapshotBackendForVerdict,
 } from '@agent-device/capture-kit/snapshot-quality-verdict';
-import { summarizeAxEvidence } from '../../../snapshot/snapshot-evidence.ts';
+import { summarizeAxEvidence } from '@agent-device/capture-kit/snapshot-evidence';
 import { getRequestSignal } from '@agent-device/host-kit/request';
 import { isLocalIosRunnerSession } from '../../direct-ios-selector.ts';
 import { emitDiagnostic } from '@agent-device/host-kit/diagnostics';
@@ -166,6 +166,12 @@ function hasMatchingPresentation(
   return hasMatchingLegacyPresentation(baseline, after, command);
 }
 
+/**
+ * Key equality, where the key is the capture's whole presentation identity — producer, generation,
+ * and the surface the capture described, since an in-place system surface (a web sign-in sheet) is
+ * captured under its own host lineage (#2438). So a cross-surface pair is refused here, without
+ * this module knowing that system surfaces exist.
+ */
 function compareSnapshotIdentity(
   baseline: SnapshotState,
   after: SnapshotState,

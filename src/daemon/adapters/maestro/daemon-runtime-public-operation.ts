@@ -20,7 +20,7 @@ export type MaestroPublicOperation =
       launchArgs: string[];
     }
   | { kind: 'stopApp'; appId?: string }
-  | { kind: 'clearAppState'; appId?: string }
+  | { kind: 'clearState'; appId?: string }
   | {
       kind: 'settingsPermission';
       appId?: string;
@@ -53,10 +53,10 @@ export type ProjectedMaestroPublicOperation = Pick<DaemonRequest, 'command' | 'p
 export function projectMaestroPublicOperation(
   operation: MaestroPublicOperation,
 ): ProjectedMaestroPublicOperation {
+  if (operation.kind === 'clearState') return projectClearState(operation);
   if (isAppOperation(operation)) return projectAppOperation(operation);
   if (isCaptureOperation(operation)) return projectCaptureOperation(operation);
   if (operation.kind === 'settingsPermission') return projectSettingsPermission(operation);
-  if (operation.kind === 'clearAppState') return projectClearAppState(operation);
   return projectInputOperation(operation);
 }
 
@@ -106,8 +106,8 @@ function projectStopApp(
   };
 }
 
-function projectClearAppState(
-  operation: Extract<MaestroPublicOperation, { kind: 'clearAppState' }>,
+function projectClearState(
+  operation: Extract<MaestroPublicOperation, { kind: 'clearState' }>,
 ): ProjectedMaestroPublicOperation {
   return {
     command: 'settings',
@@ -145,7 +145,7 @@ type MaestroInputOperation = Exclude<
   | MaestroAppOperation
   | MaestroCaptureOperation
   | { kind: 'settingsPermission' }
-  | { kind: 'clearAppState' }
+  | { kind: 'clearState' }
 >;
 
 function projectInputOperation(operation: MaestroInputOperation): ProjectedMaestroPublicOperation {

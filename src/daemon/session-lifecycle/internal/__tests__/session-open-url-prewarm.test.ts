@@ -38,9 +38,8 @@ vi.mock('@agent-device/platform-apple/app-resolution', async (importOriginal) =>
     resolveIosSimulatorDeepLinkBundleId: vi.fn(async () => undefined),
   };
 });
-vi.mock('../../../../platform-runtime-open-target.ts', async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import('../../../../platform-runtime-open-target.ts')>();
+vi.mock('@agent-device/platform-android/mechanics', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@agent-device/platform-android/mechanics')>();
   return { ...actual, resolveAndroidPackageForOpen: vi.fn(async () => undefined) };
 });
 
@@ -565,7 +564,13 @@ test('open iOS URL without app bundle id skips runner prewarm', async () => {
   expect(mockPrewarmIosRunnerSession).not.toHaveBeenCalled();
 });
 
-test('prepare ios-runner starts the XCTest runner on an explicit iOS selector', async () => {
+test('prepare ios-runner starts the XCTest runner on an explicit iOS selector', async ({
+  onTestFinished,
+}) => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  onTestFinished(() => {
+    vi.useRealTimers();
+  });
   const sessionStore = makeSessionStore('agent-device-session-open-url-prewarm-');
   const sessionName = 'prepare-ios-runner';
   mockResolveTargetDevice.mockResolvedValue({
@@ -598,8 +603,6 @@ test('prepare ios-runner starts the XCTest runner on an explicit iOS selector', 
     expect.objectContaining({ platform: 'apple', id: 'sim-1' }),
     expect.objectContaining({
       cleanStaleBundles: true,
-      buildTimeoutMs: 240000,
-      healthTimeoutMs: 240000,
       logPath: expect.stringMatching(/runner\.log$/),
       prepareDeadline: expect.objectContaining({
         elapsedMs: expect.any(Function),
@@ -607,9 +610,21 @@ test('prepare ios-runner starts the XCTest runner on an explicit iOS selector', 
         remainingMs: expect.any(Function),
       }),
       requestId: 'prepare-request',
-      startupTimeoutMs: 240000,
     }),
   );
+  // `prepareAppleRunner` spends one budget across the boot wait and the runner, so what reaches
+  // the runner is `--timeout` minus whatever readiness already used. Asserting the exact request
+  // asserts that zero wall-clock time passed, which is an accident of scheduling rather than a
+  // property of the system; the guarantee is that each budget is wired and never re-spent.
+  const [, prepareOptions] = mockPrepareIosRunner.mock.calls[0]!;
+  for (const field of ['buildTimeoutMs', 'healthTimeoutMs', 'startupTimeoutMs'] as const) {
+    expect
+      .soft(prepareOptions[field], `${field} carries the unspent remainder of --timeout`)
+      .toBeGreaterThan(239_000);
+    expect
+      .soft(prepareOptions[field], `${field} never exceeds --timeout`)
+      .toBeLessThanOrEqual(240_000);
+  }
   if (response.ok) {
     expect(response.data).toMatchObject({
       action: 'ios-runner',
@@ -688,7 +703,13 @@ test('prepare ios-runner explains overlapping timing fields with additive parts'
   }
 });
 
-test('prepare ios-runner starts the XCTest runner on an explicit macOS selector', async () => {
+test('prepare ios-runner starts the XCTest runner on an explicit macOS selector', async ({
+  onTestFinished,
+}) => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  onTestFinished(() => {
+    vi.useRealTimers();
+  });
   const sessionStore = makeSessionStore('agent-device-session-open-url-prewarm-');
   const sessionName = 'prepare-macos-runner';
   mockResolveTargetDevice.mockResolvedValue({

@@ -73,6 +73,7 @@ export type CheckId =
   | 'command-docs'
   | 'agent-guidance'
   | 'xctest-selection'
+  | 'packaged-runner-swift'
   // Gates that drive their own runner — declared nowhere, registered here.
   | 'maestro-conformance'
   | 'maestro-differential'
@@ -138,6 +139,7 @@ export const ALL_CHECKS: readonly CheckId[] = [
   'command-docs',
   'agent-guidance',
   'xctest-selection',
+  'packaged-runner-swift',
   'maestro-conformance',
   'maestro-differential',
   'maestro-regenerate',
@@ -270,11 +272,12 @@ const srcProdGate: OwnershipRule = ({ file, isSrcProd }) => {
 };
 
 function isNodeIntegrationPath(file: string): boolean {
-  return (
-    file.startsWith('test/integration/') &&
-    !file.slice('test/integration/'.length).includes('/') &&
-    file.endsWith('.ts')
-  );
+  if (!file.startsWith('test/integration/') || !file.endsWith('.ts')) return false;
+  const rest = file.slice('test/integration/'.length);
+  // command-coverage/ holds the single declaration table every platform's node --test
+  // coverage smoke test projects its record from (#2411): a change there feeds all six
+  // smoke tests even though the file itself sits one level below test/integration/.
+  return !rest.includes('/') || rest.startsWith('command-coverage/');
 }
 
 const vitestRelatedOwnership: OwnershipRule = ({ file, isTs, underSrc, underTest }) =>
@@ -351,7 +354,11 @@ const nodeIntegrationOwnership: OwnershipRule = ({ file }) =>
 
 const macosCoverageOwnership: OwnershipRule = ({ file }) =>
   file === 'test/integration/smoke-macos-coverage.test.ts' ||
-  file.startsWith('test/integration/macos-e2e/')
+  file.startsWith('test/integration/macos-e2e/') ||
+  // The per-command coverage judgments (macOS included) are declared once here and
+  // projected into macos-e2e/coverage.ts at load time (#2411), so a table edit must
+  // still select the macOS lane the way editing the old macos-e2e manifest did.
+  file.startsWith('test/integration/command-coverage/')
     ? [
         reason(
           'macos-coverage',
@@ -470,6 +477,19 @@ const BUILD_OWNERSHIP: ReadonlyArray<{
     rule: 'own:xctest-selection',
     detail: 'runner test methods must stay selected in CI and stripped from the npm source bundle',
     owns: (file) => file.startsWith('apple/runner/AgentDeviceRunner/AgentDeviceRunnerUITests/'),
+  },
+  // The packager rewrites every runner Swift file on its way into the npm package, and nothing in
+  // this repo reads the result — the first consumer is a user's `xcodebuild`. Both the source and
+  // the two rewriting scripts own the check that the rewrite keeps the file parseable and keeps its
+  // line numbering.
+  {
+    check: 'packaged-runner-swift',
+    rule: 'own:packaged-runner-swift',
+    detail: 'packaged runner Swift must still parse and keep the checkout line numbering',
+    owns: (file) =>
+      file.startsWith('apple/runner/') ||
+      file === 'scripts/package-apple-runner-source.mjs' ||
+      file === 'scripts/strip-swift-comments.mjs',
   },
   {
     check: 'android-helpers',

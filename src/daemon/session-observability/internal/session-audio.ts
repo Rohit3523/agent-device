@@ -104,9 +104,11 @@ async function startAudioProbe(
   use: typeof audioProbeStartUse,
 ): Promise<DaemonResponse> {
   // Start restarts an already-running probe (legacy parity), completing it through the durable
-  // coordinator so the previous envelope terminalizes before a new fence is minted.
+  // coordinator so the previous envelope terminalizes before a new fence is minted. Nobody reads
+  // that completion, so the previous probe is being handed back rather than captured.
   if (session.audioProbe) {
     await finishLiveAudioProbe({
+      intent: 'disposal',
       session,
       sessionName: params.sessionName,
       sessionStore: params.sessionStore,
@@ -160,8 +162,10 @@ async function audioProbeStatus(
   const data = await probe.handle.status();
   if (data.state === 'stopped') {
     // The sampler completed on its own: finish through the coordinator so the envelope
-    // terminalizes and the slot clears, but answer with the observed status.
+    // terminalizes and the slot clears, but answer with the observed status. The caller asked for
+    // status, never for an export no later stop could produce from a dead sampler.
     await finishLiveAudioProbe({
+      intent: 'disposal',
       session,
       sessionName: params.sessionName,
       sessionStore: params.sessionStore,
@@ -173,6 +177,7 @@ async function audioProbeStatus(
 async function stopAudioProbe(params: AudioParams, session: SessionState): Promise<DaemonResponse> {
   if (!session.audioProbe) return { ok: true, data: inactiveAudioProbeResult() };
   const completion = await finishLiveAudioProbe({
+    intent: 'capture',
     session,
     sessionName: params.sessionName,
     sessionStore: params.sessionStore,

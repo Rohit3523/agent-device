@@ -61,7 +61,7 @@ type CaptureNode = {
 
 /**
  * Binds the fake at the seam the handler consumes — `inspectFacts` / `bindDevice` — never at
- * `core/dispatch-resolve.ts`. `captureSnapshot` is the ONE operation `wait` declares, so this harness is
+ * `-device/device-selection/dispatch-resolve`. `captureSnapshot` is the ONE operation `wait` declares, so this harness is
  * also the proof that no sibling snapshot operation is reachable from wait's narrowed binding.
  */
 function waitRuntimeHarness(
@@ -430,6 +430,31 @@ test('an owner that advertises no native reading polls the tree only', async () 
   expect(harness.findText).not.toHaveBeenCalled();
   expect(harness.captureSnapshot).toHaveBeenCalled();
   expect(harness.bindDevice).toHaveBeenCalledTimes(1);
+});
+
+test('native text failure cannot hide a canonical capture failure', async () => {
+  const harness = waitRuntimeHarness({
+    findText: available,
+    findTextAnswers: () => {
+      throw new Error('native observation failed');
+    },
+    captureSnapshot: async () => {
+      throw new AppError('COMMAND_FAILED', 'canonical capture failed', {
+        reason: 'capture_failed',
+      });
+    },
+  });
+  const { response } = await runWait(['text', 'Ready', '200'], harness);
+  expect(response).toMatchObject({
+    ok: false,
+    error: {
+      code: 'COMMAND_FAILED',
+      message: 'canonical capture failed',
+      details: { reason: 'capture_failed' },
+    },
+  });
+  expect(harness.findText).toHaveBeenCalledOnce();
+  expect(harness.captureSnapshot).toHaveBeenCalledOnce();
 });
 
 test('an unavailable conditional observation preserves the capture-backed owner path', async () => {

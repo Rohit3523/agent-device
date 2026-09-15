@@ -2,7 +2,15 @@ import { test, expect, vi, beforeEach } from 'vitest';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { LeaseRegistry } from '../../lease-registry.ts';
-import { setActiveProviderDeviceRuntimes } from '../../../provider-device-runtime.ts';
+import {
+  isActiveProviderDevice,
+  setActiveProviderDeviceRuntimes,
+} from '../../../provider-device-runtime.ts';
+import { installProviderDeviceAdmission } from '../../provider-device-admission.ts';
+
+// The daemon reads provider ownership through its own typed admission seam; production
+// installs it from root composition, and these tests compose it the same way.
+installProviderDeviceAdmission({ isActive: isActiveProviderDevice });
 import { createTestDeviceInventoryGateways } from '../../../__tests__/test-utils/device-inventory-gateways.ts';
 import { makeSessionStore } from '../../../__tests__/test-utils/store-factory.ts';
 import { makeSession } from '../../../__tests__/test-utils/session-factories.ts';
@@ -27,6 +35,8 @@ vi.mock('@agent-device/platform-apple/runner/operations', async (importOriginal)
     prewarmAppleRunnerCache: vi.fn(),
     prewarmIosRunnerSession: vi.fn(),
     notifyIosRunnerAppRelaunched: vi.fn(async () => {}),
+    // A retained Simulator runner survives the relaunch, so its cached target is reset.
+    hasLiveIosRunnerSession: vi.fn(() => true),
     scheduleIosRunnerIdleStop: vi.fn(),
     stopIosRunnerSession: vi.fn(async () => {}),
   };
@@ -44,8 +54,8 @@ vi.mock('@agent-device/platform-apple/app-resolution', async (importOriginal) =>
     resolveIosSimulatorDeepLinkBundleId: vi.fn(async () => undefined),
   };
 });
-vi.mock('../../../platform-runtime-open-target.ts', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../../platform-runtime-open-target.ts')>();
+vi.mock('@agent-device/platform-android/mechanics', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@agent-device/platform-android/mechanics')>();
   return { ...actual, resolveAndroidPackageForOpen: vi.fn(async () => undefined) };
 });
 

@@ -19,7 +19,10 @@ AGENT_DEVICE_ANDROID_HELPER=snapshot sh ./scripts/build-android-helper.sh "$VERS
 ```
 
 The build uses Android SDK command-line tools directly. It expects `ANDROID_HOME` or
-`ANDROID_SDK_ROOT` to point at an SDK with `platforms/android-36` and matching build tools.
+`ANDROID_SDK_ROOT` to point at an SDK with `platforms/android-36`, and it compiles with the
+build-tools version named by `AGENT_DEVICE_ANDROID_BUILD_TOOLS` (or the script's last positional).
+CI must name that version; a local build without it uses the newest version under `build-tools`
+and says so on stderr.
 `pnpm prepack` builds the npm-bundled helper into `android/snapshot-helper/dist`; npm users get
 that APK in the package and the first helper-backed `snapshot` installs it automatically when
 missing or outdated.
@@ -28,7 +31,7 @@ missing or outdated.
 
 ```sh
 VERSION="$(node -p 'require("./package.json").version')"
-adb install -r -t ".tmp/android-snapshot-helper/agent-device-android-snapshot-helper-$VERSION.apk"
+adb install -r ".tmp/android-snapshot-helper/agent-device-android-snapshot-helper-$VERSION.apk"
 adb shell am instrument -w \
   -e waitForIdleTimeoutMs 500 \
   -e waitForIdleQuietMs 100 \
@@ -39,9 +42,9 @@ adb shell am instrument -w \
 ```
 
 `maxDepth` also caps recursive traversal depth inside the helper.
-The `-t` install flag is required because the helper is a test-only instrumentation APK.
-Devices or providers that block test-package installs must allow this package before helper capture
-can run.
+The helper is a plain (non-`testOnly`) instrumentation APK, so it installs without `adb install -t`.
+Some OEM builds reject `testOnly` packages from adb outright (ColorOS reports a "PC install attack"),
+which is why the helper does not set that flag.
 
 `waitForIdleTimeoutMs` defaults to `500`, which is a maximum wait, not a fixed sleep. Direct helper
 invocations can pass `0` when immediate capture during ongoing animation is preferred. Root

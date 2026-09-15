@@ -6,7 +6,7 @@ import {
 import {
   markSelectionBootOccurred,
   type DeviceSelectionResult,
-} from '../../../core/device-selection-resolver.ts';
+} from '@agent-device/device-selection/device-selection-resolver';
 import type { BoundDeviceRuntime } from '@agent-device/contracts/platform-runtime';
 import type { SessionSurface } from '@agent-device/contracts/session';
 import type { DeviceInfo } from '@agent-device/kernel/device';
@@ -19,11 +19,11 @@ import {
 } from '../../session-script-publication-capability.ts';
 import { isRequestCanceled } from '@agent-device/host-kit/request';
 import { createRequestCanceledError } from '@agent-device/kernel/errors';
+import { SessionStore } from '../../session-store.ts';
 import {
   resolveSessionRequestLogPath,
   resolveSessionRunnerLogPath,
-  SessionStore,
-} from '../../session-store.ts';
+} from '../../session-artifact-paths.ts';
 import {
   countConfiguredRuntimeHints,
   runtimeHintValues,
@@ -50,10 +50,14 @@ import {
   abandonDeviceClaim,
   acquireDeviceClaim,
   clearDeviceClaim,
+  renewDeviceClaim,
   type DeviceClaimAcquireResult,
   type DeviceClaimSessionOwnership,
   type DeviceClaimReconciler,
 } from '../../device-claims.ts';
+import type { TakenOverDeviceClaim } from '../../device-claim-reboot.ts';
+import { deviceBootObservation } from '../../../platform-runtime-device-boot.ts';
+import { appendResponseWarning } from './session-open-warnings.ts';
 import {
   buildAllocatorHeldRefusal,
   buildDeviceClaimConflictError,
@@ -103,13 +107,18 @@ function applyOrdinaryScriptRecordingOpenOutcome(params: {
   }
   if (!isAuthoringArmedSession(existingSession)) return;
   abortAuthoringOnSecondOpen(session);
-  const warnings = Array.isArray(responseData.warnings)
-    ? responseData.warnings.filter((warning): warning is string => typeof warning === 'string')
-    : [];
-  responseData.warnings = [
-    ...warnings,
+  appendResponseWarning(
+    responseData,
     'Script publication was aborted because this session completed a second open. Start a fresh session with open --save-script to author another script.',
-  ];
+  );
+}
+
+/** What the caller's `open` output says when a claim was taken over because its device rebooted. */
+function deviceClaimTakeoverWarning(tookOver: TakenOverDeviceClaim): string {
+  return (
+    `Took the device from session "${tookOver.session}" in workspace "${tookOver.workspace}": ` +
+    'that device rebooted after its claim was taken, so its app and runner were already gone.'
+  );
 }
 
 // Default-on for emulators, opt-in via --test-ime on real devices; --no-test-ime forces off.
@@ -134,6 +143,32 @@ function buildStartupPerfSample(
   };
 }
 
+/**
+ * Stamps the moment an open established its device, which is the instant a later device boot has to
+ * postdate before it can release the claim. A claim this open took, or one its session already held,
+ * counts; a session that runs without a claim has nothing to stamp. Losing the claim mid-open ends
+ * the open with the refusal every other surface reports, rather than a launch on a device this
+ * session no longer owns.
+ */
+export async function renewOpenSessionClaim(
+  device: DeviceInfo,
+  ownership: DeviceClaimSessionOwnership | undefined,
+): Promise<DaemonResponse | undefined> {
+  if (!ownership) return undefined;
+  const renewal = await renewDeviceClaim(ownership);
+  if (renewal.status === 'renewed') return undefined;
+  if (renewal.conflict) return buildDeviceClaimConflictError(device, renewal.conflict);
+  return errorResponse(
+    'DEVICE_IN_USE',
+    `${device.name} no longer holds the claim this open was made with.`,
+    {
+      reason: 'claim-lost-during-open',
+      deviceKey: ownership.deviceKey,
+      hint: 'Close this session and open the device again to claim it.',
+    },
+  );
+}
+
 // fallow-ignore-next-line complexity
 export async function completeOpenCommand(params: {
   req: DaemonRequest;
@@ -151,6 +186,8 @@ export async function completeOpenCommand(params: {
   applyRuntimeHints?: RuntimeHintApplyOperation;
   existingSession?: SessionState;
   deviceClaim?: DeviceClaimSessionOwnership;
+  /** The stale claim this open released before taking the device, when there was one. */
+  tookOverDeviceClaim?: TakenOverDeviceClaim;
   selection?: DeviceSelectionResult;
 }): Promise<DaemonResponse> {
   const {
@@ -169,6 +206,7 @@ export async function completeOpenCommand(params: {
     applyRuntimeHints,
     existingSession,
     deviceClaim,
+    tookOverDeviceClaim,
     selection,
   } = params;
   const shouldRelaunch = req.flags?.relaunch === true;
@@ -274,6 +312,9 @@ export async function completeOpenCommand(params: {
     sessionReused: existingSession !== undefined,
     selection: preparedSelection,
   });
+  if (tookOverDeviceClaim) {
+    appendResponseWarning(openResult, deviceClaimTakeoverWarning(tookOverDeviceClaim));
+  }
   applyOrdinaryScriptRecordingOpenOutcome({
     session: nextSession,
     existingSession,
@@ -401,6 +442,7 @@ async function acquireDeviceClaimForOwner(params: {
         workspace: req.meta?.cwd ?? process.cwd(),
         stateDir: sessionStore.resolveDaemonStateDir(),
         reconcileOrphanedDeviceClaim,
+        observeDeviceBoot: deviceBootObservation,
       });
   }
 }
@@ -450,6 +492,7 @@ export async function openNewSessionWithDeviceClaim(params: {
     return buildDeviceClaimConflictError(device, ownerClaim.conflict);
   if (ownerClaim.status === 'refused') return ownerClaim.response;
   const deviceClaim = ownerClaim.status === 'acquired' ? ownerClaim.ownership : undefined;
+  const tookOverDeviceClaim = ownerClaim.status === 'acquired' ? ownerClaim.tookOver : undefined;
   const effects: NewSessionOpenEffects = { mayHaveStarted: false };
   const rollbackClaim = async () =>
     await rollbackNewSessionClaim({
@@ -474,8 +517,11 @@ export async function openNewSessionWithDeviceClaim(params: {
       return details.response;
     }
     // Preparation can boot the device or warm caches, but it cannot establish session ownership.
-    // `completeOpenCommand` can relaunch-close an app or write runtime hints before its main open
-    // dispatch, so a failure from that point cannot prove ownership was not established.
+    // Stamping here is what covers a boot preparation caused for this very open; from
+    // `completeOpenCommand` on, a relaunch-close or a runtime-hint write may already have touched the
+    // app, so a failure from that point cannot prove ownership was never established.
+    const reclaimed = await renewOpenSessionClaim(device, deviceClaim);
+    if (reclaimed) return reclaimed;
     effects.mayHaveStarted = true;
     const requestedPositionals = req.positionals ?? [];
     // `open <app> <url>` carries both positionals; only `--foreground`, which has none, gets its
@@ -502,6 +548,7 @@ export async function openNewSessionWithDeviceClaim(params: {
       applyRuntimeHints,
       surface,
       deviceClaim,
+      tookOverDeviceClaim,
       selection,
     });
     if (!response.ok) await rollbackClaim();

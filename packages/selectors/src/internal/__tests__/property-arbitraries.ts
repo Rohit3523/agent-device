@@ -1,8 +1,6 @@
 import fc from 'fast-check';
 import type { SelectorKey, SelectorTerm } from '../parse.ts';
 
-export const PROPERTY_RUNS = 100;
-
 const SELECTOR_KEY_VALUE_KINDS = {
   id: 'text',
   role: 'text',

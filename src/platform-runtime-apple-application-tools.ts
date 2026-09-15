@@ -76,6 +76,16 @@ export function createAppleApplicationTools(): AppleApplicationTools {
       const { stopIosRunnerSession } = await loadRunnerOperations();
       await stopIosRunnerSession(deviceId);
     },
+    hasLiveRunnerSession: async (device, execution) => {
+      const { hasLiveIosRunnerSession } = await loadRunnerOperations();
+      return hasLiveIosRunnerSession(device, { requestId: execution.requestId });
+    },
+    releaseSpeculativeRunner: async (device, execution) => {
+      const { releaseSpeculativeIosRunnerSessionFor } = await loadRunnerOperations();
+      return await releaseSpeculativeIosRunnerSessionFor(device, {
+        requestId: execution.requestId,
+      });
+    },
     scheduleRunnerIdleStop: (deviceId) => {
       void loadRunnerOperations().then(({ scheduleIosRunnerIdleStop }) =>
         scheduleIosRunnerIdleStop(deviceId),
@@ -135,12 +145,7 @@ async function resolveAppleOpenTarget(
   return {
     appBundleId:
       macOsSurface.appBundleId ??
-      (await resolveSessionAppBundleIdForTarget(
-        device,
-        input.target,
-        input.currentAppBundleId,
-        async () => undefined,
-      )),
+      (await resolveSessionAppBundleIdForTarget(device, input.target, input.currentAppBundleId)),
     appName: macOsSurface.appName ?? input.target,
   };
 }

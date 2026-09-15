@@ -11,7 +11,7 @@ private struct RunnerUnsupportedOperationError: LocalizedError {
   var errorDescription: String? { message }
 }
 
-private enum RunnerInterfaceOrientation {
+enum RunnerInterfaceOrientation {
 #if AGENT_DEVICE_RUNNER_UNIT_TESTS
   static let unknown = 0
 #endif
@@ -316,37 +316,6 @@ extension RunnerTests {
       }
     }
     return nil
-  }
-
-  func textInputAt(app: XCUIApplication, x: Double, y: Double) -> XCUIElement? {
-    return textInputCandidatesAt(app: app, point: CGPoint(x: x, y: y)).first
-  }
-
-  private func textInputCandidatesAt(app: XCUIApplication, point: CGPoint) -> [XCUIElement] {
-    safely("TEXT_INPUT_AT_POINT", []) {
-      // Query the text-input element types directly instead of enumerating the entire tree
-      // (app.descendants(.any).allElementsBoundByIndex snapshots every element and is ~10x
-      // slower — it dominated fill latency because resolveTextEntryElement re-runs this on
-      // each verify/repair poll once the focused field reference goes stale).
-      // Prefer the smallest matching field so nested editable controls win over large containers.
-      [
-        app.textFields,
-        app.secureTextFields,
-        app.searchFields,
-        app.textViews,
-      ]
-        .flatMap { $0.allElementsBoundByIndex }
-        .filter { element in
-          guard element.exists else { return false }
-          let frame = element.frame
-          return isCoordinateTextInputCandidate(
-            enabled: element.isEnabled,
-            frame: frame,
-            point: point
-          )
-        }
-        .sorted(by: smallestElementFirst)
-    }
   }
 
   private func readableText(for element: XCUIElement) -> String? {
@@ -938,18 +907,6 @@ extension RunnerTests {
       height = screenshotSize.height
     }
     return CGRect(x: 0, y: 0, width: width, height: height)
-  }
-
-  func synthesizedFrameAvoidingKeyboardWhenAllowed(
-    app: XCUIApplication,
-    context: SynthesizedCoordinateContext
-  ) -> CGRect {
-#if os(iOS)
-    guard context.allowsKeyboardProbe else { return context.referenceFrame }
-    return frameAvoidingKeyboard(app: app, frame: context.referenceFrame)
-#else
-    return context.referenceFrame
-#endif
   }
 
   func keyboardAvoidingSynthesizedDragPoints(

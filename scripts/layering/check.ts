@@ -7,6 +7,9 @@
 //         ◄ { client, daemon-server } ◄ daemon-client ◄ cli
 // (authoritative ranks: `TARGET_DAG_RANK` in model.ts. The former rank-0 kernel
 // zone lives in packages/kernel since #1490 W0; R11 owns its boundary.)
+// `commands` and `cli-schema` share a rank, so the spine cannot order them; R2 declares the
+// direction instead — cli-schema renders the command facets and reads them, commands never
+// imports cli-schema (#2543).
 //
 // This gate enforces five things, across four scopes:
 //   - GLOBALLY, across every production source file: the remaining R2 move rule and
@@ -32,6 +35,10 @@
 //     an exports map, and every workspace specifier declared + exports-named (R11).
 //   - Over PLATFORM PACKAGE COMPOSITION: six private metadata façades meet at the exact root
 //     composition file; premature implementation loading and forbidden cross-boundary edges fail (R13).
+//   - Over THE APPLE RUNNER SUBTREE: `runner/**` may not value-import `@agent-device/host-kit/*`
+//     directly (R77) — the subtree sits in the eager closure of seven Apple façade entries the
+//     eager-closure-budgets gate holds at a fixed size, so a direct host-kit edge grows all seven;
+//     host-kit reaches the runner only through `runner/host.ts`, bound in `core/runner-host.ts`.
 //   - Over REQUEST-BOUND RUNTIME EXECUTION: facts remain the only admission authority and daemon
 //     code cannot manufacture or repair a narrowed runtime proof (R66).
 //   - Over CONTRACTS PRODUCTION SOURCE: contracts owns vocabulary only — host, process, and timer
@@ -90,6 +97,7 @@ import {
   checkRetiredPlatformsZone,
   platformPackagePolicySummary,
 } from './platform-package-policy.ts';
+import { appleRunnerHostPortViolations } from './apple-runner-host-port-policy.ts';
 import {
   listUntrackedProductionTypeScriptFiles,
   readTrackedPlatformPackageDeclarations,
@@ -102,6 +110,12 @@ import { recordRuntimeRegistryJoinViolations } from './record-runtime-registry-p
 import { recordRuntimeDaemonMechanicsViolations } from './record-runtime-mechanics-policy.ts';
 import { checkDaemonPlatformBoundary } from './daemon-platform-boundary.ts';
 import {
+  checkDaemonPlatformRuntimeInventory,
+  DAEMON_PLATFORM_RUNTIME_EDGES,
+} from './daemon-platform-runtime-inventory.ts';
+import { checkDaemonClientEntry } from './daemon-client-entry.ts';
+import { checkSessionAuthorityOverlay, handlerOwnedOverlay } from './session-authority-overlay.ts';
+import {
   listTrackedPlatformZoneFiles,
   listTrackedProductionSources,
   listTrackedSrcUtilsFiles,
@@ -113,6 +127,7 @@ import { sessionResourceOwnershipViolations } from './session-resource-ownership
 import { applicationLifecycleOwnershipViolations } from './application-lifecycle-policy.ts';
 import { iosSnapshotEngineOwnershipViolations } from './ios-snapshot-engine-policy.ts';
 import { providerSnapshotPresentationViolations } from './provider-snapshot-presentation-policy.ts';
+import { snapshotAssemblyPresentationViolations } from './snapshot-assembly-presentation-policy.ts';
 import { RETIRED_PATH_RULES, retiredPathRuleViolations } from './retired-paths-policy.ts';
 
 const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], {
@@ -351,6 +366,9 @@ function report(
       (sum, count) => sum + count,
       0,
     );
+    const measuredOverlay = handlerOwnedOverlay(ratchets.sessionAuthority);
+    const handlerOwnedShapeFiles = measuredOverlay.shapeFiles.length;
+    const handlerOwnedAuthorityFiles = measuredOverlay.authorityFiles.length;
     process.stdout.write(
       `Layering guard: OK — ${files.length} source files satisfy R2 and contain no ` +
         `value-import cycles (both checked globally); the ranked target spine contains no ` +
@@ -362,8 +380,12 @@ function report(
         `${ratchets.largestTypeCycle.length} files (R9); ${daemonModularitySummary(reference)}; ` +
         `${packageBoundariesSummary(repoRoot)}; ${platformPackagePolicySummary()}; ` +
         `runtime facts remain the only device-command admission authority and daemon code cannot ` +
-        `manufacture narrowed runtime proof (R66); and R65 keeps production src/daemon free of ` +
-        `concrete platform imports in every executable and type-only form.\n`,
+        `manufacture narrowed runtime proof (R66); R65 keeps production src/daemon free of ` +
+        `concrete platform imports in every executable and type-only form; ` +
+        `${DAEMON_PLATFORM_RUNTIME_EDGES.length} daemon-to-root platform-runtime edges hold ` +
+        `their #2278 classification (R76); and the handler-owned SessionState/SessionStore ` +
+        `authority overlay holds at or under the merge-base (R75, ` +
+        `${handlerOwnedShapeFiles} shape / ${handlerOwnedAuthorityFiles} authority files).\n`,
     );
     return 0;
   }
@@ -430,11 +452,16 @@ export const LAYERING_RULE_IDS = [
   'daemon-platform-boundary',
   'package-boundaries',
   'platform-package-policy',
+  'apple-runner-host-port',
   'retired-platforms-zone',
   'src-utils-retirement',
   'replay-ownership',
   'ios-snapshot-engine-ownership',
   'provider-snapshot-presentation-ownership',
+  'snapshot-assembly-presentation-neutrality',
+  'daemon-platform-runtime-inventory',
+  'daemon-client-entry',
+  'session-authority-overlay',
 ] as const;
 
 export type LayeringRuleId = (typeof LAYERING_RULE_IDS)[number];
@@ -477,6 +504,8 @@ export const LAYERING_RULES: Readonly<Record<LayeringRuleId, LayeringRule>> = {
       readTrackedPlatformPackageDeclarations(repoRoot),
       { untrackedProductionFiles: listUntrackedProductionTypeScriptFiles(repoRoot) },
     ),
+  'apple-runner-host-port': (context) =>
+    appleRunnerHostPortViolations(context.allTypeScriptSources),
   'retired-platforms-zone': () => checkRetiredPlatformsZone(listTrackedPlatformZoneFiles(repoRoot)),
   'src-utils-retirement': (context) =>
     retiredPathRuleViolations('R14', context.trackedSrcUtilsFiles),
@@ -487,6 +516,16 @@ export const LAYERING_RULES: Readonly<Record<LayeringRuleId, LayeringRule>> = {
     ),
   'provider-snapshot-presentation-ownership': (context) =>
     providerSnapshotPresentationViolations(context.sources, context.edges),
+  'snapshot-assembly-presentation-neutrality': (context) =>
+    snapshotAssemblyPresentationViolations(context.sources, context.edges),
+  'daemon-platform-runtime-inventory': (context) =>
+    checkDaemonPlatformRuntimeInventory(context.edges),
+  'daemon-client-entry': (context) => checkDaemonClientEntry(context.edges),
+  'session-authority-overlay': (context) =>
+    checkSessionAuthorityOverlay(
+      context.ratchets.sessionAuthority,
+      context.reference.sessionAuthority,
+    ),
 };
 
 export function main(): number {

@@ -19,8 +19,11 @@ import type {
   TransformGestureOptions,
   TypeTextOptions,
 } from '@agent-device/contracts/client';
-import type { CommandSchemaOverride } from '../../cli-schema/types.ts';
-import { REPEATED_TOUCH_FLAGS, SELECTOR_SNAPSHOT_FLAGS } from '../cli-grammar/flag-groups.ts';
+import type { CommandSchemaOverride } from '@agent-device/command-registry/command-schema';
+import {
+  REPEATED_TOUCH_FLAGS,
+  SELECTOR_SNAPSHOT_FLAGS,
+} from '@agent-device/command-registry/flag-groups';
 import { postActionObservationCliFlags } from '../post-action-observation-grammar.ts';
 import {
   toClientElementTarget,
@@ -54,12 +57,14 @@ import { selectorCliReaders, selectorDaemonWriters } from './selectors.ts';
 const interactionCliSchemas = {
   get: {
     usageOverride: 'get text|attrs <@ref|selector>',
+    usageFlags: [],
     positionalArgs: ['subcommand', 'target'],
     allowsExtraPositionals: true,
     allowedFlags: [...SELECTOR_SNAPSHOT_FLAGS, 'record'],
   },
   find: {
     usageOverride: 'find <locator|text> <action> [value] [--first|--last]',
+    usageFlags: [],
     positionalArgs: ['query', 'action', 'value?'],
     allowsExtraPositionals: true,
     allowedFlags: ['snapshotDepth', 'snapshotRaw', 'findFirst', 'findLast', 'record'],
@@ -71,6 +76,7 @@ const interactionCliSchemas = {
   },
   click: {
     usageOverride: 'click <x y|@ref|selector>',
+    usageFlags: [],
     positionalArgs: ['target'],
     allowsExtraPositionals: true,
     allowedFlags: [
@@ -82,6 +88,7 @@ const interactionCliSchemas = {
   },
   press: {
     usageOverride: 'press <x y|@ref|selector>',
+    usageFlags: [],
     positionalArgs: ['targetOrX', 'y?'],
     allowsExtraPositionals: true,
     allowedFlags: [
@@ -92,12 +99,14 @@ const interactionCliSchemas = {
   },
   longpress: {
     usageOverride: 'longpress <x y|@ref|selector> [durationMs]',
+    usageFlags: [],
     positionalArgs: ['targetOrX', 'yOrDurationMs?', 'durationMs?'],
     allowsExtraPositionals: true,
     allowedFlags: [...postActionObservationCliFlags('longpress'), ...SELECTOR_SNAPSHOT_FLAGS],
   },
   hover: {
     usageOverride: 'hover <x y|@ref|selector>',
+    usageFlags: [],
     positionalArgs: ['targetOrX', 'y?'],
     allowsExtraPositionals: true,
     allowedFlags: [...postActionObservationCliFlags('hover'), ...SELECTOR_SNAPSHOT_FLAGS],
@@ -111,6 +120,7 @@ const interactionCliSchemas = {
   },
   gesture: {
     usageOverride: 'gesture <pan|fling|swipe|pinch|rotate|transform|drag> ...',
+    usageFlags: [],
     listUsageOverride: 'gesture <pan|fling|swipe|pinch|rotate|transform|drag> ...',
     positionalArgs: ['pan|fling|swipe|pinch|rotate|transform|drag', 'args?'],
     allowsExtraPositionals: true,
@@ -126,6 +136,7 @@ const interactionCliSchemas = {
   },
   fill: {
     usageOverride: 'fill <x> <y> <text> | fill <@ref|selector> <text>',
+    usageFlags: [],
     positionalArgs: ['targetOrX', 'yOrText', 'text?'],
     allowsExtraPositionals: true,
     allowedFlags: [
@@ -136,10 +147,10 @@ const interactionCliSchemas = {
     ],
   },
   scroll: {
-    usageOverride:
-      'scroll <direction|top|bottom> [amount] [--pixels <n>] [--duration-ms <ms>] [--settle]',
+    usageOverride: 'scroll <direction|top|bottom> [amount]',
+    usageFlags: ['until', 'pixels', 'durationMs', 'settle'],
     positionalArgs: ['directionOrEdge', 'amount?'],
-    allowedFlags: ['pixels', 'durationMs', ...postActionObservationCliFlags('scroll')],
+    allowedFlags: ['pixels', 'durationMs', 'until', ...postActionObservationCliFlags('scroll')],
   },
 } as const satisfies Record<string, CommandSchemaOverride>;
 

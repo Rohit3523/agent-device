@@ -1,8 +1,9 @@
 import { test, expect, vi, beforeEach } from 'vitest';
 import { mkdtempForTestSync } from '../../../../__tests__/test-utils/tmp-dir.ts';
 
-vi.mock('../../../../core/dispatch-resolve.ts', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../../../core/dispatch-resolve.ts')>();
+vi.mock('@agent-device/device-selection/dispatch-resolve', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@agent-device/device-selection/dispatch-resolve')>();
   return { ...actual, resolveTargetDevice: vi.fn() };
 });
 vi.mock('../../../snapshot-interactor-capture.ts', () => ({
@@ -14,7 +15,7 @@ import { runReplayForTest } from '../../__tests__/replay-command-fixture.ts';
 import { SessionStore } from '../../../session-store.ts';
 import type { DaemonResponse } from '../../../daemon-request.ts';
 import { makeIosSession } from '../../../../__tests__/test-utils/session-factories.ts';
-import { formatReplayDivergenceReport } from '../../../../core/replay-divergence.ts';
+import { formatReplayDivergenceReport } from '@agent-device/ad-replay/divergence';
 import { maestroScriptSourceBundleFor } from '../../../../__tests__/test-utils/replay-script-source.ts';
 import {
   captureSnapshotThroughLegacyDispatchFixture,
@@ -194,6 +195,48 @@ test('a normalized nested failure preserves typed recovery signals on REPLAY_DIV
   expect(response.error.retriable).toBe(true);
   expect(response.error.supportedOn).toBe('ios');
   expect(response.error.details?.recovery).toBe('runner_recycle_budget_exhausted');
+});
+
+test('a capture the runner declared sparse reaches the divergence details as a verdict', async () => {
+  const root = mkdtempForTestSync('agent-device-replay-sparse-verdict-');
+  const sessionStore = new SessionStore(path.join(root, 'sessions'));
+  const sessionName = 'default';
+  sessionStore.set(sessionName, makeIosSession(sessionName, { appBundleId: 'com.example.app' }));
+  const filePath = writeReplayFile(root, ['click "Not Now"']);
+  mockDispatchCommand.mockRejectedValue(new Error('no device runner available'));
+
+  const response = await runReplayForTest({
+    req: baseReq({ positionals: [filePath] }),
+    sessionName,
+    logPath: path.join(root, 'daemon.log'),
+    sessionStore,
+    invoke: async () => ({
+      ok: false,
+      error: {
+        code: 'COMMAND_FAILED',
+        message: 'regular iOS snapshot presentation requires a valid viewport',
+        hint: 'com.apple.SafariViewService hosts the surface presented over the app.',
+        details: {
+          reason: 'invalid-viewport',
+          field: 'viewport',
+          snapshotQuality: {
+            state: 'sparse',
+            backend: 'private-ax',
+            reasonCode: 'requested-backend',
+          },
+        },
+      },
+    }),
+  });
+
+  expect(response.ok).toBe(false);
+  if (response.ok) return;
+  expect(response.error.code).toBe('REPLAY_DIVERGENCE');
+  expect(response.error.details?.snapshotQuality).toEqual({
+    state: 'sparse',
+    backend: 'private-ax',
+    reasonCode: 'requested-backend',
+  });
 });
 
 test('a failing replay step captures an available screen digest with blessed refs', async () => {

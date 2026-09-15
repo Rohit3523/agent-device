@@ -10,6 +10,7 @@ export { createDurableCaptureResourceStore } from './store.ts';
 export { finishLiveDurableCapture, forceCleanupLiveDurableCapture } from './transitions.ts';
 export type {
   AdoptStartedDurableCaptureParams,
+  DurableCaptureFinishIntent,
   DurableCaptureRecordDefinition,
   DurableCaptureResourceDefinition,
   DurableCaptureSessionStore,
@@ -22,4 +23,4 @@ export type {
   DurableCaptureRecoverySummary,
 } from './recovery.ts';
 export type { DurableCaptureRecoveryControl } from './recovery-authority.ts';
-export type { DurableCaptureResourceStore } from './store.ts';
+export type { DurableCaptureResourceRecord, DurableCaptureResourceStore } from './store.ts';

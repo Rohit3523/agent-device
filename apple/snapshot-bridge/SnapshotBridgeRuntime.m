@@ -5,6 +5,7 @@
  */
 
 #import "SnapshotBridgeRuntime.h"
+#import "SnapshotBridgeCapture.h"
 
 #import <CoreGraphics/CoreGraphics.h>
 #import <objc/message.h>
@@ -17,7 +18,7 @@
 NSString *const kProtocolVersionKey = @"protocolVersion";
 NSString *const kSourceVersionKey = @"sourceVersion";
 NSString *const kRequestIdKey = @"requestId";
-NSString *const kSourceVersion = @"agent-device-simulator-ax-v1.5.3";
+NSString *const kSourceVersion = @"agent-device-simulator-ax-v1.5.5";
 const NSUInteger kProtocolVersion = 1;
 const uint32_t kMaximumFrameBytes = 16 * 1024 * 1024;
 const NSUInteger kMaximumDepth = 128;
@@ -261,6 +262,7 @@ static void finishRequestWatchdog(dispatch_source_t watchdog, SnapshotWatchdogSt
 - (nullable NSDictionary *)snapshotForProcess:(pid_t)pid
                                     maxDepth:(NSUInteger)maxDepth
                                     maxNodes:(NSUInteger)maxNodes
+                            nativeLevelsHint:(NSUInteger)nativeLevelsHint
                                   requestId:(NSString *)requestId
                                 generation:(NSString *)generation
                               maxDurationMs:(NSUInteger)maxDurationMs
@@ -311,13 +313,27 @@ static void finishRequestWatchdog(dispatch_source_t watchdog, SnapshotWatchdogSt
   BOOL automationEnabled = [self assertAutomationMode:YES];
   NSError *runtimeError = nil;
   id snapshot = nil;
+  BOOL acquisitionTruncated = NO;
+  SnapshotCaptureRecovery recovery = {0, 0, 0, 0};
   @try {
     if (![self isPrimaryForegroundProcess:pid]) {
       if (error) *error = failureResponse(requestId, @"unsupported", @"foreground-owner-unverified", @"target app is not the primary foreground accessibility owner");
       finishRequestWatchdog(watchdog, watchdogState);
       return nil;
     }
-    snapshot = [_framework userTestingSnapshotForElement:(__bridge id)raw options:options error:&runtimeError];
+    snapshot = captureSnapshotTree((__bridge id)raw, maxDepth, maxNodes, nativeLevelsHint,
+        ^id(id element, NSUInteger depth, NSUInteger nodes, NSError **captureError) {
+          if (![self isPrimaryForegroundProcess:pid]) {
+            if (captureError) *captureError = [NSError errorWithDomain:@"agent-device.snapshot" code:5
+                userInfo:@{NSLocalizedDescriptionKey: @"foreground owner changed during continuation"}];
+            return nil;
+          }
+          NSMutableDictionary *bounded = [options mutableCopy];
+          bounded[@"maxDepth"] = @(depth);
+          bounded[@"maxChildren"] = @(nodes);
+          bounded[@"maxArrayCount"] = @(nodes);
+          return [_framework userTestingSnapshotForElement:element options:bounded error:captureError];
+        }, &acquisitionTruncated, &recovery, &runtimeError);
     if (![self isPrimaryForegroundProcess:pid]) {
       if (error) *error = failureResponse(requestId, @"unsupported", @"foreground-owner-changed", @"foreground accessibility ownership changed during acquisition");
       finishRequestWatchdog(watchdog, watchdogState);
@@ -325,6 +341,13 @@ static void finishRequestWatchdog(dispatch_source_t watchdog, SnapshotWatchdogSt
     }
   } @catch (NSException *exception) {
     if (error) *error = failureResponse(requestId, @"reader_unavailable", @"private-api-exception", exception.reason ?: @"AX snapshot raised an exception");
+    finishRequestWatchdog(watchdog, watchdogState);
+    return nil;
+  }
+  if (!snapshot && [runtimeError.domain isEqualToString:@"agent-device.snapshot"]) {
+    BOOL exhausted = runtimeError.code == 1;
+    if (error) *error = failureResponse(requestId, exhausted ? @"reader_unavailable" : @"malformed_tree",
+        exhausted ? @"continuation-budget-exhausted" : @"snapshot-tree-malformed", runtimeError.localizedDescription);
     finishRequestWatchdog(watchdog, watchdogState);
     return nil;
   }
@@ -362,8 +385,14 @@ static void finishRequestWatchdog(dispatch_source_t watchdog, SnapshotWatchdogSt
     @"ok" : @YES,
     @"pid" : @(pid),
     @"tree" : tree,
-    @"truncated" : @(truncated),
+    @"truncated" : @((BOOL)(truncated || acquisitionTruncated)),
     @"automationEnabled" : @(automationEnabled),
+    @"recovery" : @{
+      @"requests" : @(recovery.requests),
+      @"rejected" : @(recovery.rejected),
+      @"continuations" : @(recovery.continuations),
+      @"acceptedLevels" : @(recovery.acceptedLevels),
+    },
   };
 }
 @end

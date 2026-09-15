@@ -1,5 +1,5 @@
 import { AppError } from '@agent-device/kernel/errors';
-import type { CommandSchemaOverride } from '../../cli-schema/types.ts';
+import type { CommandSchemaOverride } from '@agent-device/command-registry/command-schema';
 import { enumField, requiredField, stringField } from '../command-input.ts';
 import { defineCommandFacet, defineCommandFamilyFromFacets } from '../family/types.ts';
 import { defineFieldCommandMetadata } from '../field-command-contract.ts';
@@ -28,6 +28,7 @@ export const debugCommandMetadata = defineFieldCommandMetadata(
 const debugCliSchema = {
   usageOverride:
     'debug symbols --artifact <crash.ips|crash.log> (--dsym <App.dSYM> | --search-path <dir>) [--out <symbolicated>]',
+  usageFlags: [],
   listUsageOverride: 'debug',
   positionalArgs: ['symbols'],
   allowedFlags: ['artifact', 'dsym', 'searchPath', 'out'],

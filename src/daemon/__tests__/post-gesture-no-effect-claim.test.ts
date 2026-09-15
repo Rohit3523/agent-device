@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, test, vi } from 'vitest';
-import { makeSnapshotState } from '../../__tests__/test-utils/snapshot-builders.ts';
+import { makeSnapshotState } from '@agent-device/selectors/snapshot-geometry-fixtures';
 import { mkdtempForTestSync } from '../../__tests__/test-utils/tmp-dir.ts';
 import {
   countDiagnosticEventsByPhase,
@@ -26,9 +26,8 @@ import {
 } from './post-gesture-stabilization-fixtures.ts';
 
 // When the agent-facing gestureNoEffect claim may and may not surface — split
-// by subject from post-gesture-stabilization.test.ts (the capture loop), the
-// same #1563 convention that keeps test files under the repo's 500-line
-// tripwire. Loop mechanics (rebase, distrust budget, timeouts) stay in the
+// by subject from post-gesture-stabilization.test.ts (the capture loop), per
+// #1563. Loop mechanics (rebase, distrust budget, timeouts) stay in the
 // loop file; everything here is about the claim and its veto instrumentation.
 
 afterEach(() => {

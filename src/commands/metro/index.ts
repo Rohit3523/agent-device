@@ -5,7 +5,7 @@ import type {
   MetroReloadResult,
 } from '@agent-device/contracts/remote';
 import { AppError } from '@agent-device/kernel/errors';
-import type { CommandSchemaOverride } from '../../cli-schema/types.ts';
+import type { CommandSchemaOverride } from '@agent-device/command-registry/command-schema';
 import {
   booleanField,
   enumField,
@@ -19,7 +19,10 @@ import {
 import { defineCommandFacet, defineCommandFamilyFromFacets } from '../family/types.ts';
 import { defineFieldCommandMetadata } from '../field-command-contract.ts';
 import type { CliReader } from '../cli-grammar/types.ts';
-import { METRO_PREPARE_FLAGS, METRO_RELOAD_FLAGS } from '../cli-grammar/flag-groups.ts';
+import {
+  METRO_PREPARE_FLAGS,
+  METRO_RELOAD_FLAGS,
+} from '@agent-device/command-registry/flag-groups';
 import { metroCliOutputFormatters } from './output.ts';
 import { readMetroPrepareKind } from './prepare-kind.ts';
 
@@ -72,6 +75,7 @@ type MetroInput = { action: 'prepare' | 'reload' } & MetroPrepareOptions & Metro
 const metroCliSchema = {
   usageOverride:
     'metro prepare (--public-base-url <url> | --proxy-base-url <url>) [--project-root <path>] [--port <port>] [--kind auto|react-native|expo|repack]\n  agent-device metro reload [--metro-host <host>] [--metro-port <port>] [--bundle-url <url>]',
+  usageFlags: [],
   listUsageOverride: 'metro',
   positionalArgs: ['prepare|reload'],
   allowedFlags: [...METRO_RELOAD_FLAGS, ...METRO_PREPARE_FLAGS],

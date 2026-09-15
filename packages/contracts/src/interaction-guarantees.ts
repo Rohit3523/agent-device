@@ -155,11 +155,11 @@ const RUNTIME_TREE_SHARED_GUARANTEES = {
   // predicate it applies (and the annotation contract it reads).
   occlusion: {
     kind: 'runtime',
-    via: 'src/core/selector-pipeline.ts#runNodePipelineStages',
+    via: 'packages/selectors/src/selector-pipeline.ts#runNodePipelineStages',
   },
   parentOwnedTouchPoint: {
     kind: 'runtime',
-    via: 'src/core/interaction-touch-point.ts#resolveInteractionTouchPoint',
+    via: 'packages/selectors/src/interaction-touch-point.ts#resolveInteractionTouchPoint',
   },
   // #1542: the base decision is the contracts-owned snapshot visibility resolver (bulk accessibility
   // tree), but throwIfOffscreenInteractionTarget is the actual end-to-end
@@ -170,6 +170,15 @@ const RUNTIME_TREE_SHARED_GUARANTEES = {
   // not the bulk one. Every other platform, and any backend that omits the
   // hook, refuses on the visibility resolver's verdict unchanged — this is a
   // rescue-only override, never a way to relax a genuine refusal.
+  // The live read is a SEPARATE runner request (the direct querySelector), so
+  // it shares the runner's prepareActiveCommandContext surface policy only with
+  // a RUNNER-ROUTED capture: eligible simulator captures go to the host AX
+  // bridge (packages/platform-apple/src/snapshot-route.ts), and a bridge-served
+  // capture never reaches that seam. #2448 puts the system-surface case (the
+  // web sign-in sheet) back on the runner, where both reads do share it. Either
+  // way this is not a same-instant guarantee — no captured surface identity
+  // crosses the two requests, so a surface that appears or dismisses between
+  // them is undetected.
   offscreen: {
     kind: 'runtime',
     via: 'src/commands/interaction/runtime/resolution.ts#throwIfOffscreenInteractionTarget',
@@ -178,7 +187,7 @@ const RUNTIME_TREE_SHARED_GUARANTEES = {
   // is still resolveActionableTouchResolution.
   nonHittable: {
     kind: 'runtime',
-    via: 'src/core/selector-pipeline.ts#runNodePipelineStages',
+    via: 'packages/selectors/src/selector-pipeline.ts#runNodePipelineStages',
   },
   responseConstruction: SHARED_RESPONSE_CONSTRUCTION,
   responseIdentity: {
@@ -254,11 +263,11 @@ export const INTERACTION_DISPATCH_PATHS: Record<InteractionPathId, InteractionPa
       },
       occlusion: {
         kind: 'runtime',
-        via: 'src/core/selector-pipeline.ts#runNodePipelineStages',
+        via: 'packages/selectors/src/selector-pipeline.ts#runNodePipelineStages',
       },
       parentOwnedTouchPoint: {
         kind: 'runtime',
-        via: 'src/core/interaction-touch-point.ts#resolveInteractionTouchPoint',
+        via: 'packages/selectors/src/interaction-touch-point.ts#resolveInteractionTouchPoint',
       },
       offscreen: {
         kind: 'runtime',
@@ -312,7 +321,7 @@ export const INTERACTION_DISPATCH_PATHS: Record<InteractionPathId, InteractionPa
       },
       occlusion: {
         kind: 'runtime',
-        via: 'src/core/selector-pipeline.ts#runNodePipelineStages',
+        via: 'packages/selectors/src/selector-pipeline.ts#runNodePipelineStages',
       },
       parentOwnedTouchPoint: {
         kind: 'inapplicable',

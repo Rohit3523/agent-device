@@ -70,10 +70,6 @@ const RUNNER_TRANSPORT_METHODS: Record<
     runnerCommand: 'readText',
   },
   findText: { invoke: (i) => i.findText!('Ready'), runnerCommand: 'findText' },
-  findSelector: {
-    invoke: (i) => i.findSelector!({ key: 'id', value: 'ready' }),
-    runnerCommand: 'querySelector',
-  },
   back: { invoke: (i) => i.back(), runnerCommand: 'backInApp' },
   home: { invoke: (i) => i.home(), runnerCommand: 'home' },
   setOrientation: { invoke: (i) => i.setOrientation('portrait'), runnerCommand: 'rotate' },
@@ -195,6 +191,7 @@ test('snapshot publishes runner presentation through the engine and drops its qu
     IOS_SIMULATOR,
     {},
     {
+      hasLiveSession: () => true,
       runCommand: async () => ({
         nodes: [
           {
@@ -270,7 +267,7 @@ test('macOS app snapshots preserve runner nodes outside the iOS presentation eng
   const interactor = createAppleInteractor(
     MACOS_DEVICE,
     {},
-    { runCommand: async () => ({ nodes }) },
+    { hasLiveSession: () => true, runCommand: async () => ({ nodes }) },
   );
 
   const result = presentedSnapshot(await interactor.snapshot({ interactiveOnly: true }));
@@ -282,7 +279,10 @@ test('snapshot reports typed runner presentation failures', async () => {
   const interactor = createAppleInteractor(
     IOS_SIMULATOR,
     {},
-    { runCommand: async () => ({ nodes: [{ index: 0, type: 'Application' }] }) },
+    {
+      hasLiveSession: () => true,
+      runCommand: async () => ({ nodes: [{ index: 0, type: 'Application' }] }),
+    },
   );
 
   await assert.rejects(interactor.snapshot(), (error: unknown) => {
@@ -298,6 +298,7 @@ test('sparse runner payloads with no viewport fail before publishing actionable 
     IOS_SIMULATOR,
     {},
     {
+      hasLiveSession: () => true,
       runCommand: async () => ({
         nodes: [
           { index: 0, type: 'Application', label: 'App' },
@@ -317,17 +318,29 @@ test('sparse runner payloads with no viewport fail before publishing actionable 
           reason: 'no usable snapshot backend',
           reasonCode: 'sparse-tree',
         },
+        systemSurface: { bundleId: 'com.apple.SafariViewService', kind: 'web-auth' },
       }),
     },
   );
 
-  await assert.rejects(
-    interactor.snapshot(),
-    (error: unknown) =>
-      error instanceof AppError &&
-      error.code === 'COMMAND_FAILED' &&
-      error.details?.reason === 'missing-viewport',
-  );
+  await assert.rejects(interactor.snapshot(), (error: unknown) => {
+    assert.ok(error instanceof AppError);
+    assert.equal(error.code, 'COMMAND_FAILED');
+    assert.equal(error.details?.reason, 'missing-viewport');
+    // The wire verdict and the registry-trusted surface travel with the refusal, so the caller
+    // learns which backend was asked and what was on screen instead of a bare engine invariant.
+    assert.deepEqual(error.details?.snapshotQuality, {
+      state: 'sparse',
+      backend: 'tree',
+      reason: 'no usable snapshot backend',
+      reasonCode: 'sparse-tree',
+    });
+    assert.match(
+      String(error.details?.hint),
+      /com\.apple\.SafariViewService hosts the surface presented over the app/,
+    );
+    return true;
+  });
 });
 
 test('snapshot rejects a scoped quality payload at the runner boundary', async () => {
@@ -335,6 +348,7 @@ test('snapshot rejects a scoped quality payload at the runner boundary', async (
     IOS_SIMULATOR,
     {},
     {
+      hasLiveSession: () => true,
       runCommand: async () => ({
         nodes: [{ index: 0, type: 'Application', rect: { x: 0, y: 0, width: 390, height: 844 } }],
         qualityPayload: { nodes: [], truncated: false, scope: 'Settings' },
@@ -353,6 +367,7 @@ test('snapshot rejects a scoped quality payload at the runner boundary', async (
 
 test('snapshot accepts only structured healthy empty scope results', async () => {
   const healthyEmptyProvider: AppleRunnerProvider = {
+    hasLiveSession: () => true,
     runCommand: async () => ({
       nodes: [],
       snapshotQuality: { state: 'healthy', backend: 'tree' },
@@ -376,6 +391,7 @@ test('snapshot accepts only structured healthy empty scope results', async () =>
     IOS_SIMULATOR,
     {},
     {
+      hasLiveSession: () => true,
       runCommand: async () => ({ nodes: [] }),
     },
   );
@@ -403,6 +419,7 @@ test('snapshot forwards either forceable preferredBackend into the emitted runne
 
 function recordingRunnerProvider(calls: RecordedRunnerCall[]): AppleRunnerProvider {
   return {
+    hasLiveSession: () => true,
     runCommand: async (_device, command, options) => {
       calls.push({ command, options });
       return runnerResultFor(command);

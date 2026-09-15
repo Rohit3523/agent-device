@@ -592,6 +592,19 @@ function createTimeoutError(
   });
 }
 
+/**
+ * True only for the COMMAND_FAILED error this module raises when it kills a command at
+ * its own `timeoutMs`. Callers classify with this rather than matching the message text,
+ * so a command whose own output says "timed out" is not mistaken for one exec killed.
+ */
+export function isCommandTimeoutError(error: unknown): boolean {
+  return (
+    error instanceof AppError &&
+    error.code === 'COMMAND_FAILED' &&
+    typeof error.details?.timeoutMs === 'number'
+  );
+}
+
 function createExitError(
   executable: string,
   cmd: string,
@@ -633,10 +646,11 @@ export function requireExecSuccess(
 /**
  * COMMAND_FAILED details for a non-zero exec result. `processExitError: true`
  * lets normalizeError surface the first meaningful stderr line as the user-facing
- * message instead of the generic wrap message.
+ * message instead of the generic wrap message. A process killed by a signal reports
+ * no exit code, so the raw child_process null is accepted as well.
  */
 export function execFailureDetails(
-  result: Pick<ExecResult, 'stdout' | 'stderr' | 'exitCode'>,
+  result: Pick<ExecResult, 'stdout' | 'stderr'> & Readonly<{ exitCode: number | null }>,
   extra?: Record<string, unknown>,
 ): Record<string, unknown> {
   return {

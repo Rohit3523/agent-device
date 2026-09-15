@@ -3,10 +3,12 @@ import { publishFileSync, acquireProcessLock } from '@agent-device/host-kit/file
 import { resolveIosSimulatorDeviceSetPath } from '@agent-device/kernel/device-isolation';
 
 import {
+  isCommandTimeoutError,
   requireExecSuccess,
   runCmdBackground,
   runCmdStreaming,
   runCmdSync,
+  shellQuote,
 } from '@agent-device/host-kit/command';
 import { emitDiagnostic, withDiagnosticTimer } from '@agent-device/host-kit/diagnostics';
 import {
@@ -55,6 +57,8 @@ export const appleRunnerHost: AppleRunnerHost = {
   runCmdSync,
   runCmdBackground,
   requireExecSuccess,
+  isCommandTimeoutError,
+  shellQuote,
   emitDiagnostic,
   withDiagnosticTimer,
   retryWithPolicy,

@@ -10,6 +10,7 @@ import type {
 } from '@agent-device/contracts/platform-runtime';
 import type { DeviceInfo } from '@agent-device/kernel/device';
 import { createDurableCaptureResource } from './durable-capture-resource.ts';
+import type { DurableCaptureFinishIntent } from './durable-capture-resource.ts';
 import type { PerfCaptureAdmissionLedger } from './perf-capture-admission-ledger.ts';
 import { perfCaptureResourceStore } from './perf-capture-resource-store.ts';
 import type { SessionStore } from './session-store.ts';
@@ -32,6 +33,9 @@ export const perfCaptureDurableResource = createDurableCaptureResource<
     mode: typeof completion.mode === 'string' ? completion.mode : 'unknown',
     ...(typeof completion.outPath === 'string' ? { outPath: completion.outPath } : {}),
   }),
+  // ADR 0024 rule 6: a stop that could not pull its trace leaves the profiler artifact where the
+  // next `perf stop` looks, and this kind's forced cleanup removes exactly that path.
+  failedFinishPolicy: 'preserve-retry-material',
   messages: {
     noActive: 'no active native perf capture',
     cleanupPendingHint:
@@ -58,6 +62,7 @@ export function finishLivePerfCapture(params: {
   session: SessionState;
   sessionName: string;
   sessionStore: SessionStore;
+  intent: DurableCaptureFinishIntent;
 }): Promise<PerfNativeCaptureCompletion> {
   return perfCaptureDurableResource.finishLive(params);
 }

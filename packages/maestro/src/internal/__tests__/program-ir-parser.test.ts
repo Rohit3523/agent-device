@@ -513,6 +513,19 @@ describe('parseMaestroProgram', () => {
     );
   });
 
+  test('parses evalScript as a scalar script string', () => {
+    const program = parseMaestroProgram(['---', '- evalScript: ${output.sum = 1 + 2}'].join('\n'));
+    assert.deepEqual(program.commands[0], {
+      kind: 'evalScript',
+      source: { line: 2 },
+      script: '${output.sum = 1 + 2}',
+    });
+    assert.throws(
+      () => parseMaestroProgram(['---', '- evalScript: [1, 2]'].join('\n')),
+      /evalScript expects a scalar value/i,
+    );
+  });
+
   test('reports source lines for unsupported and invalid command shapes', () => {
     assert.throws(
       () =>
@@ -577,6 +590,27 @@ describe('parseMaestroProgram', () => {
         ),
       /command "pasteText" is not supported.*\/flows\/paste\.yaml:line 2/i,
     );
+  });
+
+  test('parses standalone clearState with an explicit or config app id', () => {
+    const program = parseMaestroProgram(
+      `appId: example.app
+---
+- clearState: example.app
+- clearState
+`,
+      { sourcePath: '/flows/clear.yaml' },
+    );
+
+    assert.deepEqual(program.commands[0], {
+      kind: 'clearState',
+      source: { path: '/flows/clear.yaml', line: 3 },
+      appId: 'example.app',
+    });
+    assert.deepEqual(program.commands[1], {
+      kind: 'clearState',
+      source: { path: '/flows/clear.yaml', line: 4 },
+    });
   });
 
   test('preserves source paths for unsupported and malformed flows', () => {

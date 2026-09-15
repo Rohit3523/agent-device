@@ -10,6 +10,7 @@ import type { DeviceInfo } from '@agent-device/kernel/device';
 import { normalizeError } from '@agent-device/kernel/errors';
 import type { AppLogAdmissionLedger } from './app-log-admission-ledger.ts';
 import { createDurableCaptureResource } from './durable-capture-resource.ts';
+import type { DurableCaptureFinishIntent } from './durable-capture-resource.ts';
 import { appLogResourceStore } from './app-log-resource-store.ts';
 import type { SessionStore } from './session-store.ts';
 import type { SessionState } from './session-state.ts';
@@ -41,6 +42,7 @@ export const appLogDurableResource = createDurableCaptureResource<
     outputPath: completion.outputPath,
     completedAt: completion.completedAt,
   }),
+  failedFinishPolicy: 'dispose-on-failed-finish',
   messages: {
     noActive: 'no app log stream active',
     cleanupPendingHint:
@@ -90,6 +92,7 @@ export function finishSessionAppLog(params: {
   sessionName: string;
   sessionStore: SessionStore;
   resourcePath: string;
+  intent: DurableCaptureFinishIntent;
 }): Promise<AppLogCompletion> {
   return appLogDurableResource.finishLive(params);
 }

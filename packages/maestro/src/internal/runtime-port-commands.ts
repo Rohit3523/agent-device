@@ -31,7 +31,7 @@ type MaestroCommandOf<K extends MaestroRuntimeCommand['kind']> = Extract<
 >;
 
 type MaestroLifecycleCommand = MaestroCommandOf<
-  'launchApp' | 'stopApp' | 'setPermissions' | 'openLink'
+  'launchApp' | 'stopApp' | 'setPermissions' | 'clearState' | 'openLink'
 >;
 type MaestroTargetCommand = MaestroCommandOf<'tapOn' | 'doubleTapOn' | 'longPressOn'>;
 type MaestroTextCommand = MaestroCommandOf<'inputText' | 'eraseText'>;
@@ -57,6 +57,7 @@ const MAESTRO_RUNTIME_COMMAND_HANDLERS = {
   launchApp: executeLifecycleCommand,
   stopApp: executeLifecycleCommand,
   setPermissions: executeLifecycleCommand,
+  clearState: executeLifecycleCommand,
   openLink: executeLifecycleCommand,
   tapOn: executeTargetCommand,
   doubleTapOn: executeTargetCommand,
@@ -72,6 +73,7 @@ const MAESTRO_RUNTIME_COMMAND_HANDLERS = {
   waitForAnimationToEnd: executeNavigationCommand,
   takeScreenshot: executeSupportCommand,
   runScript: executeSupportCommand,
+  evalScript: executeEvaluationCommand,
   assertVisible: executeObservationCommand,
   assertNotVisible: executeObservationCommand,
   assertTrue: executeObservationCommand,
@@ -82,6 +84,7 @@ const MAESTRO_COMMAND_REQUIRES_SETTLED_PREDECESSOR = {
   launchApp: true,
   stopApp: true,
   setPermissions: true,
+  clearState: true,
   openLink: true,
   tapOn: true,
   doubleTapOn: true,
@@ -97,6 +100,7 @@ const MAESTRO_COMMAND_REQUIRES_SETTLED_PREDECESSOR = {
   waitForAnimationToEnd: true,
   takeScreenshot: false,
   runScript: false,
+  evalScript: false,
   assertVisible: false,
   assertNotVisible: false,
   assertTrue: false,
@@ -154,6 +158,13 @@ async function executeLifecycleCommand(
           appId: command.appId ?? request.appId,
           permissions: resolveSetPermissions(command.permissions),
         },
+        context,
+        'invalidate',
+      );
+    case 'clearState':
+      return await invokeOperation(
+        operations.clearState,
+        { appId: command.appId ?? request.appId },
         context,
         'invalidate',
       );
@@ -422,6 +433,15 @@ async function executeObservationCommand(command: MaestroObservationCommand): Pr
   throw new AppError(
     'COMMAND_FAILED',
     `Maestro ${command.kind} must be executed by the observation engine.`,
+  );
+}
+
+function executeEvaluationCommand(
+  command: MaestroCommandOf<'evalScript'>,
+): Promise<MaestroRuntimeResult> {
+  throw new AppError(
+    'COMMAND_FAILED',
+    `Maestro evalScript must be executed by the compute engine at ${command.source.path ?? ''}line ${command.source.line}.`,
   );
 }
 

@@ -3,7 +3,7 @@ import type { ScreenRecordingLiveSnapshot } from '@agent-device/contracts/screen
 import { cleanupChunks, pullChunks, stopOwnedChunks, waitForStableArtifacts } from './chunks.ts';
 import { completed } from './completion.ts';
 import { createCompletedNativeManifest, type NativeManifest } from './manifest.ts';
-import { persistNativeManifest } from './launch.ts';
+import { persistNativeManifest } from './manifest-store.ts';
 
 type Transport = Awaited<ReturnType<PlatformRuntimeHost['screenRecording']['android']['resolve']>>;
 
@@ -14,6 +14,8 @@ export async function finalizeAndroidRecording(params: {
   evidence: NativeManifest;
   manifestPath: string;
   recording: ScreenRecordingLiveSnapshot;
+  /** Host instant the recorder was launched, which is where a clip's timeline begins. */
+  startedAtMs: number;
   reachedLimit?: boolean;
 }): Promise<
   Readonly<{
@@ -21,6 +23,9 @@ export async function finalizeAndroidRecording(params: {
     result: import('@agent-device/contracts/screen-recording-runtime').ScreenRecordingCompletion;
   }>
 > {
+  // Read the clock before the signal below: everything after that signal is this tool's own export
+  // latency rather than time the screen sat unchanged.
+  const stoppedAtMs = Date.now();
   const reachedLimit =
     (await stopOwnedChunks(params.transport, params.evidence.chunks)) ||
     params.reachedLimit === true;
@@ -31,13 +36,15 @@ export async function finalizeAndroidRecording(params: {
     params.recording.outPath,
     params.recording.clientOutPath,
   );
-  const outcome = await completed(
-    params.host,
-    params.recording,
-    outputChunks,
-    'Android recording',
+  const outcome = await completed({
+    host: params.host,
+    recording: params.recording,
+    chunks: outputChunks,
+    targetLabel: 'Android recording',
     reachedLimit,
-  );
+    startedAtMs: params.startedAtMs,
+    stoppedAtMs,
+  });
   await persistNativeManifest(
     params.transport,
     params.manifestPath,

@@ -12,8 +12,10 @@ import {
   assertWaitText,
   capturePng,
   requireAndroidResourceId,
+  scrollToVisibleSelector,
 } from './live-assertions.ts';
 import { type LiveContext, runStep, verifyBehavior, verifyCommand } from './live-harness.ts';
+import { assertHumanSnapshotCompaction } from './live-snapshot-compaction.ts';
 
 const C = PUBLIC_COMMANDS;
 
@@ -49,6 +51,13 @@ export async function assertAutomationSystem(context: LiveContext): Promise<void
   await runStep(context, 'open Settings tab', ['click', `@${settingsRef}`]);
   await assertWaitText(context, 'Settings');
   await runStep(context, 'open automation lab', ['click', 'id="open-automation-lab"']);
+  await assertWaitText(context, 'Automation lab');
+
+  await assertHumanSnapshotCompaction(context);
+  await runStep(context, 'return to automation lab after snapshot compaction check', [
+    'click',
+    'id="open-automation-lab"',
+  ]);
   await assertWaitText(context, 'Automation lab');
 
   const snapshot = await runStep(context, 'capture Android automation tree', ['snapshot', '-i']);
@@ -126,19 +135,24 @@ export async function assertAutomationSystem(context: LiveContext): Promise<void
     'fixture automation-window value changed to landscape and back to portrait',
   );
 
-  await runStep(context, 'reveal input canaries', ['scroll', 'down', '0.7']);
+  await runStep(context, 'restore automation route top after rotation', ['scroll', 'top']);
+  await scrollToVisibleSelector(context, 'id="automation-press"');
   await runStep(context, 'press semantic canary', ['press', 'id="automation-press"']);
+  await scrollToVisibleSelector(context, 'id="automation-last-input"');
   await assertWaitText(context, 'Last input: press');
   verifyCommand(context, C.press, 'semantic press updates durable fixture input state');
 
+  await scrollToVisibleSelector(context, 'id="automation-longpress"');
   await runStep(context, 'long press semantic canary', [
     'longpress',
     'id="automation-longpress"',
     '800',
   ]);
+  await scrollToVisibleSelector(context, 'id="automation-longpress-count"');
   await assertWaitText(context, 'Long presses: 1');
   verifyCommand(context, C.longPress, '800ms hold increments durable fixture long-press counter');
 
+  await scrollToVisibleSelector(context, 'id="automation-open-alert"');
   await runStep(context, 'open Android native alert', ['click', 'id="automation-open-alert"']);
   await assertWaitText(context, 'Automation confirmation');
   const alertSnapshot = await runStep(context, 'capture native alert through persistent helper', [
@@ -164,6 +178,7 @@ export async function assertAutomationSystem(context: LiveContext): Promise<void
   const alert = await runStep(context, 'inspect Android native alert', ['alert', 'get']);
   assertJsonContains(alert, 'Automation confirmation', 'alert get should expose fixture dialog');
   await runStep(context, 'dismiss Android native alert', ['alert', 'dismiss']);
+  await scrollToVisibleSelector(context, 'id="automation-alert-result"');
   // The dismissal is confirmed, but the fixture's re-render after the button callback is the
   // app's own timing: wait for the outcome, then pin it to the canary element.
   await assertWaitText(context, 'Alert result: cancelled');
@@ -175,7 +190,7 @@ export async function assertAutomationSystem(context: LiveContext): Promise<void
   verifyCommand(context, C.alert, 'alert wait/get/dismiss/accept produce fixture-visible results');
 
   await assertHomeAndRecentsRestoration(context);
-  await runStep(context, 'reveal Android alert canary for diff baseline', ['scroll', 'down', '1']);
+  await scrollToVisibleSelector(context, 'id="automation-open-alert"');
   await runStep(context, 'establish automation diff baseline', ['snapshot', '-i']);
   await runStep(context, 'return from automation route with Back', ['back']);
   const diff = await runStep(context, 'observe automation-to-settings diff', [

@@ -317,7 +317,10 @@ async function handleLogsClearRestart(
 ): Promise<DaemonResponse> {
   const { session, sessionName, sessionStore } = params;
   if (session.appLog) {
+    // The stream is replaced and its files cleared behind it: nobody captures that completion, and
+    // an open record left here would refuse the start this path exists to serve.
     await finishSessionAppLog({
+      intent: 'disposal',
       session,
       sessionName,
       sessionStore,
@@ -350,6 +353,7 @@ async function handleLogsStop(params: LogsHandlerParams): Promise<DaemonResponse
   }
   const outPath = sessionStore.resolveAppLogPath(sessionName);
   await finishSessionAppLog({
+    intent: 'capture',
     session,
     sessionName,
     sessionStore,

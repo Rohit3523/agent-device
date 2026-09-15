@@ -1,15 +1,23 @@
 import path from 'node:path';
 import { PLATFORMS } from '@agent-device/kernel/device';
 import { parseSync } from 'oxc-parser';
-import { visitAst } from './layering-ast.ts';
+import { destructuredDynamicImportBindings, visitAst } from './layering-ast.ts';
 
 export type ImportEdge = {
   spec: string;
   dynamic: boolean;
   typeOnly: boolean;
   line: number;
-  /** Named symbols imported from the target; empty for side-effect, namespace, and dynamic imports. */
+  /**
+   * Named symbols imported from the target; empty for side-effect and namespace imports, and for
+   * dynamic imports that do not destructure named bindings.
+   */
   symbols: readonly string[];
+  /**
+   * True when a dynamic-import destructure holds a binding the scanner cannot name (a rest element
+   * or a computed key); `symbols` then does not enumerate the full imported surface.
+   */
+  bindingResidue: boolean;
 };
 
 export type ResolvedImportEdge = ImportEdge & {
@@ -40,13 +48,12 @@ const TARGET_DAG_RANK = new Map([
   ['ad-script', 1],
   ['command-registry', 1],
   ['contracts', 1],
+  ['device-selection', 1],
   ['maestro', 1],
-  ['recording', 1],
   ['replay-test', 1],
-  ['request', 1],
   ['screenshot-diff', 1],
   ['selectors', 1],
-  ['snapshot', 1],
+  ['session-journal', 1],
   ['core', 2],
   ['cli-schema', 3],
   ['commands', 3],
@@ -150,16 +157,20 @@ function literalSpecifier(node: unknown): string | undefined {
 function scanDynamicImports(source: string): ImportEdge[] {
   const edges: ImportEdge[] = [];
   const parsed = parseSync('layering-imports.ts', source);
+  const destructured = destructuredDynamicImportBindings(parsed.program);
   visitAst(parsed.program, (node) => {
     if (node.type !== 'ImportExpression') return;
     const spec = literalSpecifier(node.source);
     if (spec === undefined) return;
+    const start = node.start as number | undefined;
+    const capture = typeof start === 'number' ? destructured.get(start) : undefined;
     edges.push({
       spec,
       dynamic: true,
       typeOnly: false,
-      line: sourceLine(source, node.start as number | undefined),
-      symbols: [],
+      line: sourceLine(source, start),
+      symbols: capture ? [...capture.symbols] : [],
+      bindingResidue: capture?.residue ?? false,
     });
   });
   return edges;
@@ -168,7 +179,14 @@ function scanDynamicImports(source: string): ImportEdge[] {
 function scanSideEffectImport(line: string, lineNo: number): ImportEdge | null {
   const match = /^\s*import\s+['"]([^'"]+)['"]/.exec(line);
   return match
-    ? { spec: match[1]!, dynamic: false, typeOnly: false, line: lineNo, symbols: [] }
+    ? {
+        spec: match[1]!,
+        dynamic: false,
+        typeOnly: false,
+        line: lineNo,
+        symbols: [],
+        bindingResidue: false,
+      }
     : null;
 }
 
@@ -232,6 +250,7 @@ function scanFromImport(lines: string[], index: number): ImportEdge | null {
     typeOnly: statementIsTypeOnly(normalizedStatement),
     line: start + 1,
     symbols: importedSymbols(normalizedStatement),
+    bindingResidue: false,
   };
 }
 
@@ -266,7 +285,8 @@ export function topFolder(file: string): string {
 }
 
 export function targetDagZone(file: string): string {
-  if (file.startsWith('src/daemon/client/')) return 'daemon-client';
+  // #2342 relocated the daemon client to its own `src/daemon-client/` folder, so the
+  // client zone now falls out of the folder itself; `src/daemon/` is server-only.
   if (file.startsWith('src/daemon/')) return 'daemon-server';
   return topFolder(file);
 }

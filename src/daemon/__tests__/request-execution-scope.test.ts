@@ -19,7 +19,8 @@ import {
   createRequestExecutionScope,
   prepareLockedRequestScope,
 } from '../request-execution-scope.ts';
-import { resolveSessionRequestLogPath } from '../session-store.ts';
+import { resolveSessionRequestLogPath } from '../session-artifact-paths.ts';
+import { resolveSessionScope } from '../session-routing.ts';
 import type { DaemonRequest } from '../daemon-request.ts';
 import { mkdtempForTestSync } from '../../__tests__/test-utils/tmp-dir.ts';
 import { makeTestScreenRecordingResource } from '../../__tests__/test-utils/screen-recording-live-handle.ts';
@@ -68,6 +69,32 @@ test('createRequestExecutionScope applies tenant scoping and locked lease admiss
     async () => scope.req.internal?.admittedLease?.leaseId,
   );
   expect(admittedLeaseId).toBe(lease.leaseId);
+});
+
+test('createRequestExecutionScope is the single defaulting authority for the apps filter', async () => {
+  const sessionStore = makeSessionStore('agent-device-request-scope-defaults-');
+  const leaseRegistry = new LeaseRegistry();
+
+  const defaulted = await createRequestExecutionScope({
+    req: makeRequest({ command: 'apps' }),
+    sessionStore,
+    leaseRegistry,
+  });
+  expect(defaulted.req.flags?.appsFilter).toBe('user-installed');
+
+  const overridden = await createRequestExecutionScope({
+    req: makeRequest({ command: 'apps', flags: { appsFilter: 'all' } }),
+    sessionStore,
+    leaseRegistry,
+  });
+  expect(overridden.req.flags?.appsFilter).toBe('all');
+
+  const untouched = await createRequestExecutionScope({
+    req: makeRequest({ command: 'snapshot' }),
+    sessionStore,
+    leaseRegistry,
+  });
+  expect(untouched.req.flags?.appsFilter).toBeUndefined();
 });
 
 test('createRequestExecutionScope resolves session-scoped request and runner log paths', async () => {
@@ -509,7 +536,12 @@ test('expired leases remove owned sessions before the next command and free capa
   expect(nextLease.tenantId).toBe('tenant-b');
 });
 
-test('expired leased session cleanup waits for the request execution lock', async () => {
+// A lease renewed only at admission lets one command slower than its inactivity TTL
+// expire the lease paying for the device it is using, and expiry then tears the
+// provider session down under the client still waiting for that same command. Found
+// while investigating #2509, whose cloud session ran on a ten-minute lease and so
+// lost its session some other way.
+test('an admitted request that outlives the lease TTL keeps its lease and session', async () => {
   let now = 1_000;
   const sessionStore = makeSessionStore('agent-device-request-scope-');
   const leaseRegistry = new LeaseRegistry({
@@ -530,8 +562,49 @@ test('expired leased session cleanup waits for the request execution lock', asyn
       },
     }),
   );
+
+  const slow = await createRequestExecutionScope({
+    req: makeRequest({ command: 'snapshot' }),
+    sessionStore,
+    leaseRegistry,
+  });
+  // The capture is still being waited on when it crosses the TTL, as a cloud
+  // page-source read does on a screen that never goes idle.
+  expect(await slow.runLocked(async () => (now = 1_011))).toBe(1_011);
+
+  const next = await createRequestExecutionScope({
+    req: makeRequest({ command: 'screenshot' }),
+    sessionStore,
+    leaseRegistry,
+  });
+  expect(await next.runLocked(async () => 'ran')).toBe('ran');
+  expect(sessionStore.get('default')).toBeDefined();
+});
+
+test('expired leased session cleanup waits for the request execution lock', async () => {
+  let now = 1_000;
+  const requestId = 'request-scope-holds-execution-lock';
+  const sessionStore = makeSessionStore('agent-device-request-scope-');
+  const leaseRegistry = new LeaseRegistry({
+    defaultLeaseTtlMs: 10,
+    minLeaseTtlMs: 1,
+    now: () => now,
+  });
+  const lease = leaseRegistry.allocateLease({ tenantId: 'tenant-a', runId: 'run-1' });
+  sessionStore.set(
+    'default',
+    makeIosSession('default', {
+      lease: {
+        leaseId: lease.leaseId,
+        tenantId: lease.tenantId,
+        runId: lease.runId,
+        leaseBackend: lease.backend,
+        expiresAt: lease.expiresAt,
+      },
+    }),
+  );
   const first = await createRequestExecutionScope({
-    req: makeRequest({ command: 'click' }),
+    req: makeRequest({ command: 'click', meta: { requestId } }),
     sessionStore,
     leaseRegistry,
   });
@@ -554,16 +627,24 @@ test('expired leased session cleanup waits for the request execution lock', asyn
       }),
   );
   await firstEnteredPromise;
+  // The client walked away from this request. Abandoned work no longer defers the
+  // expiry it is sitting on, which is what makes this case about the lock and not
+  // about in-flight lease liveness.
+  markRequestCanceled(requestId);
 
   now = 1_011;
   const secondRun = second.runLocked(async () => 'second');
   await new Promise((resolve) => setTimeout(resolve, 20));
   expect(sessionStore.get('default')).toBeDefined();
 
-  releaseFirst();
-  await firstRun;
-  await expect(secondRun).resolves.toBe('second');
-  expect(sessionStore.get('default')).toBeUndefined();
+  try {
+    releaseFirst();
+    await firstRun;
+    await expect(secondRun).resolves.toBe('second');
+    expect(sessionStore.get('default')).toBeUndefined();
+  } finally {
+    clearRequestCanceled(requestId);
+  }
 });
 
 test('tenant lease rejection flushes diagnostics into the effective session request log', async () => {
@@ -855,3 +936,41 @@ function makeRequest(overrides: Partial<DaemonRequest> = {}): DaemonRequest {
     ...overrides,
   };
 }
+
+// The `attachesToSession` routing option is derived from the command's own registry classification,
+// so a swapped derivation has to be visible somewhere: an inventory command must keep resolving an
+// address across implicit session ambiguity, and a session command must refuse instead of picking
+// one workspace session by open order.
+async function createScopeAcrossTwoImplicitWorkspaceSessions(command: string) {
+  const root = mkdtempForTestSync('agent-device-request-scope-ambiguity-');
+  fs.mkdirSync(path.join(root, '.git'));
+  const scope = resolveSessionScope({ ...makeRequest({ command }), meta: { cwd: root } });
+  if (scope.kind !== 'cwd') throw new Error('expected a cwd session scope');
+  const sessionStore = makeSessionStore('agent-device-request-scope-ambiguity-');
+  sessionStore.set(
+    `cwd:${scope.id}:ios`,
+    makeIosSession('default', { sessionScope: { kind: 'cwd', id: scope.id } }),
+  );
+  sessionStore.set(
+    `cwd:${scope.id}:android`,
+    makeAndroidSession('default', { sessionScope: { kind: 'cwd', id: scope.id } }),
+  );
+  return await createRequestExecutionScope({
+    req: makeRequest({ command, meta: { cwd: root, requestId: `ambiguity-${command}` } }),
+    sessionStore,
+    leaseRegistry: new LeaseRegistry(),
+  });
+}
+
+test('createRequestExecutionScope lets session list route across implicit session ambiguity', async () => {
+  const scope = await createScopeAcrossTwoImplicitWorkspaceSessions('session_list');
+
+  expect(scope.sessionName).toMatch(/^cwd:[a-f0-9]{16}:default$/);
+  await scope[Symbol.asyncDispose]();
+});
+
+test('createRequestExecutionScope refuses a session command across implicit session ambiguity', async () => {
+  await expect(createScopeAcrossTwoImplicitWorkspaceSessions('press')).rejects.toMatchObject({
+    code: 'AMBIGUOUS_MATCH',
+  });
+});

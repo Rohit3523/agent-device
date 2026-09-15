@@ -56,7 +56,14 @@ test('parseImports detects multiline dynamic imports', () => {
   const edges = parseImports(['void import(', "  '../multiline.ts'", ');'].join('\n'));
 
   assert.deepEqual(edges, [
-    { spec: '../multiline.ts', dynamic: true, typeOnly: false, line: 1, symbols: [] },
+    {
+      spec: '../multiline.ts',
+      dynamic: true,
+      typeOnly: false,
+      line: 1,
+      symbols: [],
+      bindingResidue: false,
+    },
   ]);
 });
 
@@ -64,8 +71,38 @@ test('parseImports resolves constant-template dynamic imports', () => {
   const edges = parseImports('void import(`../template.ts`);');
 
   assert.deepEqual(edges, [
-    { spec: '../template.ts', dynamic: true, typeOnly: false, line: 1, symbols: [] },
+    {
+      spec: '../template.ts',
+      dynamic: true,
+      typeOnly: false,
+      line: 1,
+      symbols: [],
+      bindingResidue: false,
+    },
   ]);
+});
+
+test('parseImports captures destructured named bindings of dynamic imports, keyed by export name', () => {
+  const edges = parseImports(
+    [
+      "const { a, 'b': c } = await import('./dyn.ts');",
+      "const mod = await import('./dyn.ts');",
+      "const wrapped = (await import('./dyn.ts')) as Mod;",
+      'const { a, ...rest } = await import("./dyn.ts");',
+      'const { [keyExpr]: named } = await import("./dyn.ts");',
+    ].join('\n'),
+  );
+
+  assert.deepEqual(
+    edges.map(({ spec, symbols, bindingResidue }) => ({ spec, symbols, bindingResidue })),
+    [
+      { spec: './dyn.ts', symbols: ['a', 'b'], bindingResidue: false },
+      { spec: './dyn.ts', symbols: [], bindingResidue: false },
+      { spec: './dyn.ts', symbols: [], bindingResidue: false },
+      { spec: './dyn.ts', symbols: ['a'], bindingResidue: true },
+      { spec: './dyn.ts', symbols: [], bindingResidue: true },
+    ],
+  );
 });
 
 test('parseImports retains named source symbols without changing edge-kind detection', () => {
@@ -160,7 +197,7 @@ test('neutral ownership zones reject value imports into higher layers', () => {
     new Map([
       ['src/contracts/result.ts', "import '../core/result.ts';"],
       ['src/core/result.ts', 'export const result = true;'],
-      ['src/request/cancel.ts', "import '../commands/cancel.ts';"],
+      ['packages/device-selection/src/selection.ts', "import '@agent-device/commands/cancel';"],
       ['src/commands/cancel.ts', 'export const cancel = true;'],
       ['packages/selectors/src/internal/parse.ts', "import '../../../../src/client/client.ts';"],
       ['src/client/client.ts', 'export const client = true;'],
@@ -172,7 +209,9 @@ test('neutral ownership zones reject value imports into higher layers', () => {
   assert.deepEqual(collectBackEdges(edges), {
     'cli-schema -> cli': ['src/cli-schema/schema.ts -> src/cli/parser.ts'],
     'contracts -> core': ['src/contracts/result.ts -> src/core/result.ts'],
-    'request -> commands': ['src/request/cancel.ts -> src/commands/cancel.ts'],
+    'device-selection -> commands': [
+      'packages/device-selection/src/selection.ts -> src/commands/cancel.ts',
+    ],
     'selectors -> client': ['packages/selectors/src/internal/parse.ts -> src/client/client.ts'],
   });
 });
@@ -253,7 +292,7 @@ test('classifyZone separates the ranked spine from intentionally-unranked zones'
   // Every satellite zone joined the spine; only the composition root stays out, because R2
   // forbids daemon/ from importing commands/ so the files that wire them cannot be ranked.
   assert.equal(classifyZone('mcp'), 'ranked');
-  assert.equal(classifyZone('snapshot'), 'ranked');
+  assert.equal(classifyZone('screenshot-diff'), 'ranked');
   // A zone that is neither ranked nor listed peripheral must be flagged, never
   // silently treated as back-edge-free.
   assert.equal(classifyZone('not-a-real-zone'), 'unclassified');

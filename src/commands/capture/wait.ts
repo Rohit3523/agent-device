@@ -3,7 +3,7 @@ import { PUBLIC_COMMANDS } from '@agent-device/command-registry/catalog';
 import type { WaitCommandOptions } from '@agent-device/contracts/client';
 import { parseWaitPositionals } from '@agent-device/command-registry/wait-positionals';
 import type { WaitParsed } from '@agent-device/command-registry/wait-positionals';
-import { SELECTOR_SNAPSHOT_FLAGS } from '../cli-grammar/flag-groups.ts';
+import { SELECTOR_SNAPSHOT_FLAGS } from '@agent-device/command-registry/flag-groups';
 import { AppError } from '@agent-device/kernel/errors';
 import { isValidSelectorExpression } from '@agent-device/selectors';
 import { booleanField, enumField, integerField, stringField } from '../command-input.ts';
@@ -19,8 +19,8 @@ import { defineCommandFacet } from '../family/types.ts';
 import { defineFieldCommandMetadata } from '../field-command-contract.ts';
 import { messageOutput } from '../output-common.ts';
 import { WAIT_KIND_VALUES } from './wait-command-contract.ts';
-import { absenceCaptureOptionRefusal } from '../../core/absence-observation.ts';
-import { absenceCaptureOptionError } from '../../core/absence-observation-errors.ts';
+import { absenceCaptureOptionRefusal } from '@agent-device/selectors/absence-observation';
+import { absenceCaptureOptionError } from '@agent-device/selectors/absence-observation-errors';
 
 const WAIT_COMMAND_NAME = 'wait';
 
@@ -45,6 +45,7 @@ const waitCommandMetadata = defineFieldCommandMetadata(WAIT_COMMAND_NAME, waitCo
 const waitCliSchema = {
   usageOverride:
     'wait <ms>|text <text>|@ref|<selector>|absent <selector> [timeoutMs]|stable [quietMs] [timeoutMs]',
+  usageFlags: [],
   positionalArgs: ['durationOrSelector', 'timeoutMs?'],
   allowsExtraPositionals: true,
   allowedFlags: [...SELECTOR_SNAPSHOT_FLAGS],

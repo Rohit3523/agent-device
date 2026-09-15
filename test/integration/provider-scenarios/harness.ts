@@ -21,7 +21,11 @@ import type { AppleSimulatorScreenRecordingProcess } from '../../../src/platform
 import { trackDownloadableArtifact } from '../../../src/daemon/artifact-tracking.ts';
 import { LeaseRegistry } from '../../../src/daemon/lease-registry.ts';
 import { SessionStore } from '../../../src/daemon/session-store.ts';
-import type { DaemonRequest, DaemonResponse } from '../../../src/daemon/daemon-request.ts';
+import type {
+  DaemonInvokeFn,
+  DaemonRequest,
+  DaemonResponse,
+} from '../../../src/daemon/daemon-request.ts';
 import type { SessionState } from '../../../src/daemon/session-state.ts';
 import { runCmdBackground } from '@agent-device/host-kit/command';
 import { createOwnedProcessRecordStore } from '@agent-device/host-kit/process';
@@ -38,9 +42,18 @@ import {
 import { createHostDiagnostics } from '../../../src/platform-runtime-host-diagnostics.ts';
 import type { PlatformRuntimeProviderRegistration } from '../../../src/platform-runtime-gateway.ts';
 import { createProviderPlatformRuntimeRegistrations } from '../../../src/provider-device-runtimes.ts';
+import { isActiveProviderDevice } from '../../../src/provider-device-runtime.ts';
+import { installProviderDeviceAdmission } from '../../../src/daemon/provider-device-admission.ts';
+import { installInteractorResolution } from '../../../src/daemon/interactor-resolution.ts';
+import { getInteractor } from '../../../src/core/interactors.ts';
 import { unavailableDeviceRuntimeGateway } from '../../../src/daemon/__tests__/test-device-runtime-gateway.ts';
 
 import { openWebSessionNames } from '../../../src/daemon/web-session-names.ts';
+
+// Match daemon composition (src/daemon/server/daemon-runtime.ts): the daemon decides on provider
+// ownership through its own admission seam, which root composition installs.
+installProviderDeviceAdmission({ isActive: (device) => isActiveProviderDevice(device) });
+installInteractorResolution({ resolve: getInteractor });
 
 const PROVIDER_SCENARIO_TOKEN = 'provider-scenario-token';
 const PROVIDER_SCENARIO_TEMP_REMOVE_OPTIONS = {
@@ -65,6 +78,9 @@ export type ProviderScenarioHarness = {
     },
   ) => Promise<ProviderScenarioRpcResult>;
   client: () => AgentDeviceClient;
+  /** The scenario daemon's request boundary, for mounting it behind a real HTTP server. */
+  handleRequest: DaemonInvokeFn;
+  token: string;
   session: (name?: string) => SessionState | undefined;
   sessionDir: (name?: string) => string;
   setSession: (name: string, session: SessionState) => void;
@@ -209,6 +225,8 @@ export async function createProviderScenarioHarness(
         `direct-${command}-${Date.now()}`,
       ),
     client: () => createAgentDeviceClient({}, { transport }),
+    handleRequest,
+    token: PROVIDER_SCENARIO_TOKEN,
     session: (name = 'default') => sessionStore.get(name),
     sessionDir: (name = 'default') => sessionStore.resolveSessionDir(name),
     setSession: (name, session) => sessionStore.set(name, session),

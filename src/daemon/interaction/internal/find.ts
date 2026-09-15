@@ -5,8 +5,8 @@ import {
   parseFindSelectorExpression,
   type FindLocator,
 } from '@agent-device/selectors';
-import { runNodePipelineStages } from '../../../core/selector-pipeline.ts';
-import { SELECTOR_PIPELINE_POLICIES } from '../../../core/selector-pipeline-policy.ts';
+import { runNodePipelineStages } from '@agent-device/selectors/selector-pipeline';
+import { SELECTOR_PIPELINE_POLICIES } from '@agent-device/selectors/selector-pipeline-policy';
 import { centerOfRect, type SnapshotState } from '@agent-device/kernel/snapshot';
 import { expireRefFrame } from '../../ref-frame.ts';
 import type { DaemonInvokeFn, DaemonRequest, DaemonResponse } from '../../daemon-request.ts';
@@ -24,7 +24,10 @@ import { executeBoundTypeText } from '../../type-text-runtime.ts';
 import { dispatchFindReadOnlyViaRuntime } from '../../selector-runtime.ts';
 import { admitAndBindSnapshotCapture } from '../../snapshot-runtime-binding.ts';
 import type { FocusPointInput } from '@agent-device/contracts/focus-runtime';
-import { resolveSelectorCaptureRuntimePlan } from '@agent-device/contracts/platform-runtime-operations';
+import {
+  findRuntimeIntent,
+  resolveSelectorCaptureRuntimePlan,
+} from '@agent-device/contracts/platform-runtime-operations';
 import type { TypeTextRuntimeOperations } from '@agent-device/contracts/type-text-runtime';
 import type { FindRouteInput } from './types.ts';
 import { createFindTargetCapture, sparseFindSnapshotResponse } from './find-target-capture.ts';
@@ -52,6 +55,8 @@ type ResolvedMatch = {
   resolvedNode: SnapshotState['nodes'][number];
   ref: string;
   nodes: SnapshotState['nodes'];
+  /** The in-place iOS system surface the target capture described (#2438), if any. */
+  iosSystemSurfaceBundleId?: string;
   actionFlags: Record<string, unknown>;
   /**
    * Set when find's row refuses this match as covered. Only the focus/type
@@ -107,7 +112,7 @@ export async function handleFindCommands(params: FindRouteInput): Promise<Daemon
     session,
     plan: resolveSelectorCaptureRuntimePlan({
       hasActiveApp: session.appBundleId !== undefined,
-      intent: action === 'focus' ? 'find-focus' : action === 'type' ? 'find-type' : 'capture-only',
+      intent: findRuntimeIntent(action),
     }),
     inspectFacts: params.inspectFacts,
     bindDevice: params.bindDevice,
@@ -169,6 +174,9 @@ export async function handleFindCommands(params: FindRouteInput): Promise<Daemon
     resolvedNode,
     ref,
     nodes,
+    ...(snapshotResult.iosSystemSurfaceBundleId
+      ? { iosSystemSurfaceBundleId: snapshotResult.iosSystemSurfaceBundleId }
+      : {}),
     actionFlags,
     ...(target.kind === 'occluded' ? { occludedNode: target.node } : {}),
   };
@@ -214,7 +222,16 @@ async function dispatchFindAction(
  * (occlusion, promotion, off-screen) still run on this node.
  */
 function preresolvedTarget(match: ResolvedMatch): PreresolvedInteractionTarget {
-  return { ref: match.ref, node: match.resolvedNode, nodes: match.nodes };
+  return {
+    ref: match.ref,
+    node: match.resolvedNode,
+    nodes: match.nodes,
+    // #2438: the leaf's post-action verify/settle compares against this tree, so it must know
+    // whether the tree describes the app or an in-place system surface served over it.
+    ...(match.iosSystemSurfaceBundleId
+      ? { iosSystemSurfaceBundleId: match.iosSystemSurfaceBundleId }
+      : {}),
+  };
 }
 
 async function handleFindClick(ctx: FindContext, match: ResolvedMatch): Promise<DaemonResponse> {

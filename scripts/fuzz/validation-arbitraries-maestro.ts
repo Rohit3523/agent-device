@@ -22,6 +22,8 @@ function validMaestroCommand(pick: number, salt: number): string[] {
     () => ['- back'],
     () => ['- hideKeyboard'],
     () => ['- stopApp'],
+    () => ['- clearState'],
+    () => [`- clearState: ${text}`],
     () => ['- scroll'],
     () => ['- waitForAnimationToEnd'],
     () => ['- eraseText'],
@@ -48,17 +50,12 @@ function validMaestroCommand(pick: number, salt: number): string[] {
     () => ['- setPermissions:', '    permissions:', '      camera: allow'],
     () => ['- setPermissions:', '    permissions:', '      all: deny'],
     () => ['- launchApp:', '    appId: com.example.app', '    permissions:', '      camera: allow'],
+    () => [`- evalScript: ${text}`],
   ];
   return options[pick % options.length]!();
 }
 
-const FAKE_MAESTRO_COMMANDS = [
-  'clickOn',
-  'tapOnPoint',
-  'evalScript',
-  'launchActivity',
-  'inputTextt',
-] as const;
+const FAKE_MAESTRO_COMMANDS = ['clickOn', 'tapOnPoint', 'launchActivity', 'inputTextt'] as const;
 
 /** `code` is per class, like the CLI table: a class whose contract changes moves alone. */
 type MaestroMutation = { name: string; code: string; lines: (salt: number) => string[] };

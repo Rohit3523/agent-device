@@ -3,11 +3,11 @@ import { PUBLIC_COMMANDS } from '@agent-device/command-registry/catalog';
 import { isIosFamily, publicPlatformString, type DeviceInfo } from '@agent-device/kernel/device';
 import { AppError } from '@agent-device/kernel/errors';
 import { emitRequestProgress } from '@agent-device/host-kit/request';
-import { isActiveProviderDevice } from '../../provider-device-runtime.ts';
+import { isActiveProviderDevice } from '../provider-device-admission.ts';
 import {
   listLocalDeviceInventory,
   shouldPropagateDeviceInventoryProbeError,
-} from '../../request/device-inventory-context.ts';
+} from '@agent-device/device-selection/device-inventory-context';
 import { readVersion } from '@agent-device/host-kit/version';
 import type { DaemonRequest, DaemonResponse } from '../daemon-request.ts';
 import type { SessionState } from '../session-state.ts';

@@ -5,13 +5,14 @@ import type {
   BackendSnapshotOptions,
   BackendSnapshotResult,
 } from '../../../backend.ts';
+import type { IosSnapshotProducer } from '@agent-device/contracts/ios-snapshot';
 import { createLocalArtifactAdapter } from '../../../io.ts';
 import {
   createAgentDevice,
   localCommandPolicy,
   type CommandSessionStore,
 } from '../../../runtime.ts';
-import { makeSnapshotState } from '../../../__tests__/test-utils/snapshot-builders.ts';
+import { makeSnapshotState } from '@agent-device/selectors/snapshot-geometry-fixtures';
 
 test('runtime snapshot captures nodes and updates the session baseline', async () => {
   let stored: Parameters<CommandSessionStore['set']>[0] | undefined;
@@ -55,6 +56,65 @@ test('runtime snapshot preserves unknown hierarchy completeness for engine-owned
   const result = await device.capture.snapshot({ session: 'default' });
 
   assert.equal(result.truncated, undefined);
+});
+
+/**
+ * An absent `truncated` is only "not truncated" when the producer would have noticed (#2188
+ * invariant 5). #2199 moved that answer out of the producer capability table into a truncation
+ * table of its own, so this pins the whole producer axis rather than the one Appium case above.
+ */
+test('runtime snapshot upgrades an absent truncation flag only for producers that observe it', async () => {
+  const expected = {
+    'apple-runner': false,
+    'simulator-ax-bridge': false,
+    'appium-source': undefined,
+    'limrun-ios-tree': undefined,
+  } as const satisfies Record<IosSnapshotProducer, boolean | undefined>;
+
+  for (const producer of Object.keys(expected) as IosSnapshotProducer[]) {
+    const device = createSnapshotOnlyDevice({
+      snapshot: { nodes: [], backend: 'xctest', producer, createdAt: 1 },
+    });
+
+    const result = await device.capture.snapshot({ session: 'default' });
+
+    assert.equal(result.truncated, expected[producer], producer);
+  }
+});
+
+test('runtime snapshot recognizes equivalent bounds and still updates its baseline', async () => {
+  let stored: Parameters<CommandSessionStore['set']>[0] | undefined;
+  let rect = { x: 10, y: 20, width: 100, height: 40 };
+  const device = createAgentDevice({
+    backend: createSnapshotBackend(() => ({
+      snapshot: makeSnapshotState([{ index: 0, depth: 0, type: 'Button', label: 'Save', rect }], {
+        comparisonSafe: true,
+      }),
+    })),
+    artifacts: createLocalArtifactAdapter(),
+    sessions: {
+      get: () => stored,
+      set: (record) => {
+        stored = record;
+      },
+    },
+    policy: localCommandPolicy(),
+  });
+
+  await device.capture.snapshot({ session: 'default' });
+  rect = { height: 40, width: 100, y: 20, x: 10 };
+  const repeated = await device.capture.snapshot({ session: 'default' });
+
+  assert.equal(repeated.unchanged?.nodeCount, 1);
+  assert.equal(stored?.snapshot?.nodes, repeated.nodes);
+
+  const forced = await device.capture.snapshot({ session: 'default', forceFull: true });
+  assert.equal(forced.unchanged, undefined);
+
+  rect = { ...rect, x: 11 };
+  const moved = await device.capture.snapshot({ session: 'default' });
+  assert.equal(moved.unchanged, undefined);
+  assert.equal(stored?.snapshot?.nodes[0]?.rect?.x, 11);
 });
 
 test('runtime snapshot uses the Appium sparse-tree disclosure for Appium acquisition', async () => {
@@ -290,7 +350,7 @@ test('runtime snapshot renders the structured quality verdict and skips legacy d
 
   const result = await device.capture.snapshot({ session: 'default' });
 
-  assert.equal(result.warnings?.length, 2);
+  assert.equal(result.warnings?.length, 3);
   assert.match(
     String(result.warnings?.[0]),
     /Detected an overly complex or slow accessibility tree/,
@@ -299,6 +359,8 @@ test('runtime snapshot renders the structured quality verdict and skips legacy d
   assert.match(String(result.warnings?.[0]), /It is OK to continue/);
   assert.match(String(result.warnings?.[0]), /snapshotQuality\.reason/);
   assert.match(String(result.warnings?.[1]), /@e2 \[Other\] merges many labels/);
+  // The fixture is a cut capture; the shared disclosure follows the verdict's own warnings.
+  assert.match(String(result.warnings?.[2]), /cut at a backend limit/);
   assert.deepEqual(result.snapshotQuality?.state, 'recovered');
 });
 
@@ -643,3 +705,30 @@ function assertReactNativeOverlayWarning(warnings: string[] | undefined) {
   assert.match(warnings[0] ?? '', /agent-device react-native dismiss-overlay/);
   assert.match(warnings[0] ?? '', /verifies the overlay is gone/);
 }
+
+test('runtime snapshot discloses a cut capture the same way on every backend', async () => {
+  for (const backend of ['android', 'xctest'] as const) {
+    const device = createSnapshotOnlyDevice({
+      nodes: [{ ref: 'e1', index: 0, depth: 0, type: 'Window', label: 'Home' }],
+      truncated: true,
+      backend,
+    });
+
+    const result = await device.capture.snapshot({ session: 'default' });
+
+    assert.equal(result.truncated, true, backend);
+    const cut = (result.warnings ?? []).filter((warning) => /cut at a backend limit/.test(warning));
+    assert.equal(cut.length, 1, `${backend}: ${JSON.stringify(result.warnings)}`);
+  }
+
+  const complete = createSnapshotOnlyDevice({
+    nodes: [{ ref: 'e1', index: 0, depth: 0, type: 'Window', label: 'Home' }],
+    truncated: false,
+    backend: 'android',
+  });
+  const result = await complete.capture.snapshot({ session: 'default' });
+  assert.equal(
+    (result.warnings ?? []).some((warning) => /cut at a backend limit/.test(warning)),
+    false,
+  );
+});

@@ -5,11 +5,11 @@ import {
   trySignalProcess,
   waitForDaemonExit,
   type DaemonProcessIdentity,
-} from './daemon-process.ts';
+} from '../daemon-process.ts';
 import { isProcessAlive } from '@agent-device/host-kit/process';
 import { sleep } from '@agent-device/host-kit/retry';
 
-import type { DaemonPaths } from './config.ts';
+import type { DaemonPaths } from '../daemon-resolution.ts';
 import { readRegisteredDaemonIdentity } from './daemon-registration.ts';
 import type { DeviceClaimRecord, ProviderReleaseRecord } from './daemon-shutdown-report.ts';
 

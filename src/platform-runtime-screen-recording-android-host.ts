@@ -1,11 +1,12 @@
 import path from 'node:path';
 import type {
   AndroidScreenRecordingProcessIdentity,
+  AndroidScreenRecordingProcessOwnership,
   AndroidScreenRecordingTransport,
 } from '@agent-device/contracts/screen-recording-runtime-host';
 import type { DeviceInfo } from '@agent-device/kernel/device';
 import { shellQuote } from '@agent-device/host-kit/command';
-import { isPlayableVideo } from './recording/video.ts';
+import { isPlayableVideo } from '@agent-device/capture-kit/recording-video';
 import { loadAndroidMechanics } from './platform-runtime-android-mechanics.ts';
 
 const ANDROID_MANIFEST_NAME = 'agent-device-recording-active.json';
@@ -49,6 +50,7 @@ export async function createAndroidScreenRecordingTransport(
     stop: async (process, options, signal) => {
       const inspected = await inspectAndroidScreenRecordingProcess(shell, process, signal);
       if (inspected.status === 'missing') return 'already-missing';
+      if (inspected.status === 'foreign-writer') return 'ownership-lost';
       if (inspected.status !== 'owned-alive') return inspected.status;
       const stopped = await shell(`kill ${options?.force ? '-9 ' : '-2 '}${process.pid}`, signal);
       return stopped.exitCode === 0 ? 'stopped' : 'uncertain';
@@ -65,11 +67,9 @@ export async function createAndroidScreenRecordingTransport(
       const size = Number(result.stdout.trim());
       return Number.isSafeInteger(size) && size >= 0 ? size : 'uncertain';
     },
-    findRunning: async (remotePath, signal) => {
+    probeRunningWriters: async (remotePath, signal) => {
       const result = await shell('ps -A -o pid=', signal);
-      if (result.exitCode !== 0) {
-        throw new Error('failed to enumerate Android screenrecord processes');
-      }
+      if (result.exitCode !== 0) return { writers: [], conclusive: false };
       const pids = result.stdout.split(/\s+/).filter((pid) => /^\d+$/.test(pid));
       const inspected = await Promise.all(
         pids.map(
@@ -81,9 +81,12 @@ export async function createAndroidScreenRecordingTransport(
             ),
         ),
       );
-      return inspected.flatMap((outcome) =>
-        outcome.status === 'owned-alive' && outcome.process ? [outcome.process] : [],
-      );
+      return {
+        writers: inspected.flatMap((outcome) =>
+          outcome.status === 'owned-alive' && outcome.process ? [outcome.process] : [],
+        ),
+        conclusive: !inspected.some((outcome) => outcome.status === 'uncertain'),
+      };
     },
     pullPlayable: async ({ remotePath, outputPath }, signal) => {
       const result = await adb(['pull', remotePath, outputPath], {
@@ -140,7 +143,7 @@ async function inspectAndroidScreenRecordingProcess(
   signal?: AbortSignal,
 ): Promise<
   Readonly<{
-    status: 'missing' | 'owned-alive' | 'ownership-lost' | 'uncertain';
+    status: AndroidScreenRecordingProcessOwnership;
     process?: AndroidScreenRecordingProcessIdentity;
   }>
 > {
@@ -156,7 +159,7 @@ async function inspectAndroidScreenRecordingProcess(
     return { status: 'ownership-lost' };
   }
   if (expected.startTime.length > 0 && expected.startTime !== startTime) {
-    return { status: 'ownership-lost' };
+    return { status: 'foreign-writer' };
   }
   return {
     status: 'owned-alive',

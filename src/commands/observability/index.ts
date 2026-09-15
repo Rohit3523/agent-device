@@ -7,7 +7,7 @@ import type {
 import { NETWORK_INCLUDE_MODES, type NetworkIncludeMode } from '@agent-device/kernel/contracts';
 import { AppError } from '@agent-device/kernel/errors';
 import { parseStringMember } from './string-enum.ts';
-import type { CommandSchemaOverride } from '../../cli-schema/types.ts';
+import type { CommandSchemaOverride } from '@agent-device/command-registry/command-schema';
 import { defineCommandFacet, defineCommandFamilyFromFacets } from '../family/types.ts';
 import { booleanField, enumField, integerField, stringField } from '../command-input.ts';
 import { defineFieldCommandMetadata } from '../field-command-contract.ts';
@@ -82,6 +82,7 @@ export const audioCommandMetadata = defineFieldCommandMetadata(
 const logsCliSchema = {
   usageOverride:
     'logs path | logs start | logs stop | logs clear [--restart] | logs doctor | logs mark [message...]',
+  usageFlags: [],
   positionalArgs: ['path|start|stop|clear|doctor|mark', 'message?'],
   allowsExtraPositionals: true,
   allowedFlags: ['restart'],
@@ -96,6 +97,7 @@ const eventsCliSchema = {
 const networkCliSchema = {
   usageOverride:
     'network dump [limit] [summary|headers|body|all] [--include summary|headers|body|all] | network log [limit] [summary|headers|body|all] [--include summary|headers|body|all]',
+  usageFlags: [],
   listUsageOverride: 'network',
   positionalArgs: ['dump|log', 'limit?', 'include?'],
   allowedFlags: ['networkInclude'],

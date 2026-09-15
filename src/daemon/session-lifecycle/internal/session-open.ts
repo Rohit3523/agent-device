@@ -1,4 +1,4 @@
-import { resolveTargetDeviceSelection } from '../../../core/dispatch-resolve.ts';
+import { resolveTargetDeviceSelection } from '@agent-device/device-selection/dispatch-resolve';
 import {
   openApplicationRuntimeUse,
   openApplicationWithRuntimeHintApplyAndClearUse,
@@ -34,11 +34,12 @@ import type {
   InspectDeviceRuntimeFacts,
 } from '../../request-runtime-binding.ts';
 import { admitRuntimeOperations } from '../../runtime-admission.ts';
-import { resolveExistingSessionDeviceSelection } from '../../../core/device-selection-resolver.ts';
+import { resolveExistingSessionDeviceSelection } from '@agent-device/device-selection/device-selection-resolver';
 import { requireRuntimeBinding, requireRuntimeFacts } from '../../session-runtime-admission.ts';
 import {
   completeOpenCommand,
   openNewSessionWithDeviceClaim,
+  renewOpenSessionClaim,
   type OpenApplicationRuntime,
   type RuntimeHintApplyOperation,
   type RuntimeHintClearOperation,
@@ -190,6 +191,11 @@ async function handleOpenCommand(params: SessionOpenCommandInput): Promise<Daemo
     });
     if (validation) return validation;
 
+    // Reopening renews the claim before anything touches the device, so no other daemon ever sees
+    // a device this session is actively coming back to as one its owner walked away from.
+    const lostClaim = await renewOpenSessionClaim(session.device, session.deviceClaim);
+    if (lostClaim) return lostClaim;
+
     const device = await refreshSessionDeviceIfNeeded(session.device);
     const selection = resolveExistingSessionDeviceSelection(device);
     await req.internal?.retainDeviceExecutionLock?.(device.id);
@@ -219,6 +225,11 @@ async function handleOpenCommand(params: SessionOpenCommandInput): Promise<Daemo
       foreground: false,
     });
     if (details.type === 'response') return details.response;
+
+    // Preparation may have booted the device to reach this surface, and a boot an owner caused for
+    // its own reopen cannot later read as a boot its owner walked away from.
+    const reclaimed = await renewOpenSessionClaim(device, session.deviceClaim);
+    if (reclaimed) return reclaimed;
 
     return await completeOpenCommand({
       req,

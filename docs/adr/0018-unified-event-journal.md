@@ -59,7 +59,7 @@ redaction discipline, and sink (inventoried 2026-07-24):
    `phaseCounts` tally, and debug-mode live streaming to the per-request ndjson file (after
    `createRequestExecutionScope` rebinds `logPath`), `daemon.log`, or stderr. The
    `traceLogPath` scope option is dead: no call site ever sets it.
-2. **Session event log** (`src/daemon/session-event-log.ts`). Append-only per-session
+2. **Session event log** (`@agent-device/session-journal/session-event-log`). Append-only per-session
    `events.ndjson` with kinds `request.started`/`request.finished`/`action.recorded`, written from
    three request-lifecycle points plus `SessionStore.recordAction`, read only by the public
    `events` command. `action.recorded` is already a projection of `session.actions` pushes — the
@@ -325,7 +325,7 @@ gets built.
   inconsistency, and three write paths. Kept as the migration's first independently useful step
   instead.
 - **Merge `upload-progress` and `app-events` in:** rejected. Upload progress is a local
-  byte-counter callback that never crosses the request scope; `core/app-events.ts` is a deep-link
+  byte-counter callback that never crosses the request scope; `src/daemon/app-events.ts` is a deep-link
   builder for the `trigger-app-event` command, not an event channel.
 
 ## Validation required for implementation

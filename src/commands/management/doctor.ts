@@ -1,5 +1,5 @@
 import { PUBLIC_COMMANDS } from '@agent-device/command-registry/catalog';
-import type { CommandSchemaOverride } from '../../cli-schema/types.ts';
+import type { CommandSchemaOverride } from '@agent-device/command-registry/command-schema';
 import * as commandInput from '../command-input.ts';
 import { commonInputFromFlags, direct } from '../cli-grammar/common.ts';
 import type { CliReader, DaemonWriter } from '../cli-grammar/types.ts';
@@ -21,8 +21,7 @@ const doctorCommandMetadata = defineFieldCommandMetadata(
 );
 
 const doctorCliSchema = {
-  usageOverride:
-    'doctor [--platform ios|android|harmonyos|vega|macos|linux|web|apple] [--app <id-or-name>] [--remote]',
+  usageOverride: 'doctor [--platform ios|android|harmonyos|vega|macos|linux|web|apple]',
   allowedFlags: ['targetApp', 'remote'],
 } as const satisfies CommandSchemaOverride;
 

@@ -39,15 +39,18 @@ function declarations(): PlatformPackageDeclaration[] {
             '@agent-device/platform-apple/runner/test-host',
             '@agent-device/platform-apple/runner/operations',
             '@agent-device/platform-apple/runner-owner',
+            '@agent-device/platform-apple/session-observation',
             '@agent-device/platform-apple/simctl',
             '@agent-device/platform-apple/snapshot-source',
             '@agent-device/platform-apple/simulator',
+            '@agent-device/platform-apple/simulator-boot',
             '@agent-device/platform-apple/tool-provider',
           ]
         : family === 'android'
           ? [
               '@agent-device/platform-android',
               '@agent-device/platform-android/adb-host',
+              '@agent-device/platform-android/device-boot',
               '@agent-device/platform-android/mechanics',
             ]
           : [`@agent-device/platform-${family}`],

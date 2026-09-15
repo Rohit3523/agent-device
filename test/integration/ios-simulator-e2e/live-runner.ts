@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 
 import type { AgentDeviceDaemonTransport } from '@agent-device/contracts/client';
 import { PUBLIC_COMMANDS } from '@agent-device/command-registry/catalog';
-import { sendToDaemon } from '../../../src/daemon/client/daemon-client.ts';
+import { sendToDaemon } from '../../../src/daemon-client/daemon-client.ts';
 import { assertPngFile } from '../provider-scenarios/assertions.ts';
 import {
   assertFilesDiffer,
@@ -17,6 +17,7 @@ import {
 import { assertAutomationInput } from './live-automation-scenario.ts';
 import { assertDeviceLifecycle } from './live-device-lifecycle.ts';
 import { assertRegularVisibleDepthFrontier } from './live-snapshot-depth-frontier.ts';
+import { assertWebViewRemoteContent } from './live-webview-remote-content.ts';
 import {
   assertLifecycleAndSystem,
   assertObservabilityAndArtifacts,
@@ -77,6 +78,7 @@ const LIVE_SCENARIOS = bindIosSimulatorScenarios<LiveContext>({
   lifecycleSystem: assertLifecycleAndSystem,
   observabilityArtifacts: assertObservabilityAndArtifacts,
   snapshotDepthFrontier: assertRegularVisibleDepthFrontier,
+  webviewRemoteContent: assertWebViewRemoteContent,
 });
 
 export async function runIosSimulatorE2E(): Promise<void> {

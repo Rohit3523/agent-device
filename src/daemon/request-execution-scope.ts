@@ -6,7 +6,6 @@ import {
   getDiagnosticsMeta,
   updateDiagnosticsScope,
 } from '@agent-device/host-kit/diagnostics';
-import { applyCommandDefaults } from '../cli-schema/command-schema.ts';
 import { AppError, normalizeError } from '@agent-device/kernel/errors';
 import {
   type DaemonCommandContext,
@@ -25,8 +24,9 @@ import { createRequestExecutionLocks } from './request-execution-locks.ts';
 import { throwIfRequestCanceled } from '@agent-device/host-kit/request';
 import { finalizeDaemonResponse } from './request-finalization.ts';
 import { refreshRecordingHealth } from './request-recording-health.ts';
+import { runAdmittedLeaseWork } from './request-lease-work.ts';
 import {
-  isHumanControlMutation,
+  getSessionCommandKind,
   shouldBlockForInvalidRecording,
   shouldLockSessionExecution,
   shouldValidateSessionSelector,
@@ -35,13 +35,10 @@ import {
   buildRequestFinishedEvent,
   buildRequestStartedEvent,
   shouldRecordEventForRequest,
-} from './session-event-log.ts';
+} from '@agent-device/session-journal/session-event-log';
 import type { LeaseRegistry } from './lease-registry.ts';
-import {
-  resolveSessionRequestLog,
-  resolveSessionRunnerLogPath,
-  type SessionStore,
-} from './session-store.ts';
+import { type SessionStore } from './session-store.ts';
+import { resolveSessionRequestLog, resolveSessionRunnerLogPath } from './session-artifact-paths.ts';
 import type { DaemonRequest, DaemonResponse } from './daemon-request.ts';
 import type { SessionState } from './session-state.ts';
 import { teardownSessionResources } from './session-teardown.ts';
@@ -59,7 +56,10 @@ import {
 } from './request-runtime-binding.ts';
 import { createDeviceClaimAdmission, type DeviceClaimAdmission } from './device-claim-admission.ts';
 import { createOwnerScopedDeviceClaimReconciler } from './device-claim-owner-recovery.ts';
-import { resolveCommandDeviceClaimPolicy } from '@agent-device/command-registry/registry';
+import {
+  applyCommandDefaults,
+  resolveCommandDeviceClaimPolicy,
+} from '@agent-device/command-registry/registry';
 import type { PlatformResourceCleanup } from './platform-resource-cleanup.ts';
 
 // Production daemon wiring owns one LeaseRegistry per process; scoping locks by registry keeps
@@ -126,7 +126,13 @@ export async function createRequestExecutionScope(params: {
 
   const command = scopedReq.command;
   const startedAtMs = Date.now();
-  const sessionName = resolveEffectiveSessionName(scopedReq, sessionStore);
+  const sessionName = resolveEffectiveSessionName(scopedReq, sessionStore, {
+    // Inventory commands (`session list`, `devices`, `doctor`, …) route only to locate their own
+    // artifacts and never act through a session, so they must keep resolving an address even when
+    // the workspace owns several implicit sessions. Refusing them would refuse `session list`, the
+    // command an agent runs to resolve that ambiguity.
+    attachesToSession: getSessionCommandKind(command) !== 'inventory',
+  });
   const diagnosticsMeta = getDiagnosticsMeta();
   const sessionDir = sessionStore.resolveSessionDir(sessionName);
   const requestLog = resolveSessionRequestLog({
@@ -242,9 +248,7 @@ export async function createRequestExecutionScope(params: {
           providerAppCatalog: params.providerAppCatalog,
         });
         scope.req = scopedReq;
-        return isHumanControlMutation(scopedReq)
-          ? await leaseRegistry.runDeviceMutation(scopedReq.internal?.admittedLease, task)
-          : await task();
+        return await runAdmittedLeaseWork({ leaseRegistry, req: scopedReq, task });
       },
       runLocked: async (task) => {
         throwIfRequestCanceled(scopedReq.meta?.requestId);

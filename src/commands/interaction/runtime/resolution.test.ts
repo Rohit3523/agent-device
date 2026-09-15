@@ -8,9 +8,9 @@ import {
   tryResolveRefNode,
 } from './resolution.ts';
 import { resolveRecordedTarget } from '@agent-device/selectors';
-import { makeSnapshotState } from '../../../__tests__/test-utils/snapshot-builders.ts';
+import { makeSnapshotState } from '@agent-device/selectors/snapshot-geometry-fixtures';
 import type { Point } from '@agent-device/kernel/snapshot';
-import { INTERACTION_ERROR_REASONS } from '../../../core/interaction-error.ts';
+import { INTERACTION_ERROR_REASONS } from '@agent-device/selectors/interaction-error';
 import {
   clickRefE2,
   coveredByTabBarSnapshot,
@@ -187,10 +187,10 @@ test('runtime press names a direction for a partial clip whose center is off-scr
       assert.equal(details?.reason, 'offscreen_selector');
       assert.equal(details?.scrollDirection, 'down');
       assert.match(String(details?.hint), /scroll down/i);
-      // #1366 recovery must be bounded: a single large (fling) scroll overshoots,
-      // so the hint steers to small steps / a bounded gesture pan.
-      assert.match(String(details?.hint), /small steps/i);
-      assert.match(String(details?.hint), /gesture pan/i);
+      // #1366 recovery must be bounded. `--until` is what bounds it now: it checks the same
+      // selector between passes, so the hint names one command rather than a manual step loop.
+      assert.match(String(details?.hint), /scroll down --until 'label=Cash'/);
+      assert.match(String(details?.hint), /stops on the target/i);
       return true;
     },
   );

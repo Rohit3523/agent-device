@@ -17,6 +17,11 @@ import type { LayeringRatchets } from './ratchet-reference.ts';
 export const DAEMON_MODULARITY_BASELINE = {
   externalDaemonTypesImporters: [
     'src/client/client-normalizers.ts',
+    // #2559 drove the `src/daemon-client/**` half of this list to zero value edges and moved its
+    // residual wire-only type reads to R78 (`daemon-client-entry.ts`), which names each measured
+    // edge and forbids any runtime import. The daemon-client files are skipped below so the two
+    // gates never own the same edge; the importers left here are zones the client-entry rule
+    // does not cover.
     'src/remote/daemon-artifacts.ts',
   ],
 } as const;
@@ -60,8 +65,33 @@ export function checkDaemonModularityRatchets(
     ...checkSessionStateBaseline(measured.sessionState, reference.sessionState),
     ...checkTypeCycleBaseline(measured.largestTypeCycle, reference.largestTypeCycle),
     ...checkDaemonTypesImporters(edges),
+    ...checkDaemonCliSchemaBoundary(edges),
     ...checkLogicalModuleImports(edges),
   ];
+}
+
+// The daemon resolves command routes through the registry and fills request defaults through the
+// command registry, so it never needs the CLI schema layer. #2543 cut the last two value edges
+// (`request-execution-scope.ts` and `session-action-recorder.ts`); this pins that decoupling so a
+// future daemon module cannot reach `src/cli-schema/` again and re-pull the parser closure.
+const DAEMON_FORBIDDEN_CLI_SCHEMA_ROOT = 'src/cli-schema/';
+
+function checkDaemonCliSchemaBoundary(edges: readonly ResolvedImportEdge[]): LayeringViolation[] {
+  return edges
+    .filter(
+      (edge) =>
+        edge.file.startsWith('src/daemon/') &&
+        matchesDeclaredRoot(edge.target, DAEMON_FORBIDDEN_CLI_SCHEMA_ROOT),
+    )
+    .map((edge) => ({
+      rule: 'R10 daemon-modularity',
+      file: edge.file,
+      line: edge.line,
+      message:
+        `${edge.file} must not import ${edge.target}: the daemon resolves routes through ` +
+        '@agent-device/command-registry and must not load the CLI schema layer. Declare the shared ' +
+        'shape in the command registry or contracts, not in src/cli-schema/.',
+    }));
 }
 
 export function checkRetiredSessionLifecyclePaths(
@@ -214,6 +244,9 @@ function checkDaemonTypesImporters(edges: readonly ResolvedImportEdge[]): Layeri
   const importers = new Map<string, ResolvedImportEdge>();
   for (const edge of edges) {
     if (!DAEMON_TYPE_MODULES.includes(edge.target) || edge.file.startsWith('src/daemon/')) continue;
+    // #2559: the client's daemon-request/session-state reads are owned by the stricter
+    // R78 `daemon-client-entry` gate, which also bans runtime imports and names each edge.
+    if (edge.file.startsWith('src/daemon-client/')) continue;
     importers.set(edge.file, edge);
   }
   const violations = [...importers]

@@ -32,7 +32,6 @@ export type AppleScreenRecordingRunnerRequest =
 
 export type AppleScreenRecordingRunnerResult = Readonly<{
   recorderStartUptimeMs?: number;
-  targetAppReadyUptimeMs?: number;
   runnerSessionId?: string;
   runnerAuthority?: 'local-lease' | 'scoped-provider';
   remotePath?: string;
@@ -94,11 +93,66 @@ export type AndroidScreenRecordingProcessIdentity = Readonly<{
   startTime: string;
 }>;
 
+/**
+ * Which recorders write a path that no committed identity names, and whether the scan can prove that
+ * list is the whole story. `conclusive` means every candidate process was read; an unreadable one
+ * clears neither, so only a conclusive scan with no writers proves the path is free.
+ */
+export type AndroidScreenRecordingWriterSearch = Readonly<{
+  writers: readonly AndroidScreenRecordingProcessIdentity[];
+  conclusive: boolean;
+}>;
+
+/**
+ * `ownership-lost`: the pid is present, yet the identity readable there names something else — a
+ * reassigned pid, or an exited task whose command line is already gone. `foreign-writer`: the pid
+ * runs `screenrecord` on the recorded remote path but started at a different time, so a recorder
+ * that is not ours is writing that artifact. `uncertain` reads nothing conclusive.
+ */
 export type AndroidScreenRecordingProcessOwnership =
   | 'missing'
   | 'owned-alive'
   | 'ownership-lost'
+  | 'foreign-writer'
   | 'uncertain';
+
+/**
+ * Whether an observation proves that the process named by the inspected identity is gone. Both
+ * `ownership-lost` and `foreign-writer` are proof rather than doubt: the recorded process can no
+ * longer write its artifact.
+ */
+export function provesAndroidScreenRecordTermination(
+  ownership: AndroidScreenRecordingProcessOwnership,
+): boolean {
+  switch (ownership) {
+    case 'missing':
+    case 'ownership-lost':
+    case 'foreign-writer':
+      return true;
+    case 'owned-alive':
+    case 'uncertain':
+      return false;
+  }
+}
+
+/**
+ * Whether an observation proves that nothing writes the recorded remote path any more, which is
+ * what removing the artifact requires. A recorder proven gone is not proof of that: a
+ * `foreign-writer` has claimed the same path.
+ */
+export function provesAndroidScreenRecordPathUnclaimed(
+  ownership: AndroidScreenRecordingProcessOwnership,
+): boolean {
+  switch (ownership) {
+    case 'missing':
+    case 'ownership-lost':
+      return true;
+    case 'foreign-writer':
+    case 'owned-alive':
+    case 'uncertain':
+      return false;
+  }
+}
 
 export type AndroidScreenRecordingStopOutcome =
   | 'stopped'
@@ -123,10 +177,10 @@ export type AndroidScreenRecordingTransport = Readonly<{
   ): Promise<AndroidScreenRecordingStopOutcome>;
   exists(remotePath: string, signal?: AbortSignal): Promise<boolean | 'uncertain'>;
   size(remotePath: string, signal?: AbortSignal): Promise<number | undefined | 'uncertain'>;
-  findRunning(
+  probeRunningWriters(
     remotePath: string,
     signal?: AbortSignal,
-  ): Promise<readonly AndroidScreenRecordingProcessIdentity[]>;
+  ): Promise<AndroidScreenRecordingWriterSearch>;
   pullPlayable(
     input: Readonly<{ remotePath: string; outputPath: string }>,
     signal?: AbortSignal,
@@ -184,7 +238,7 @@ export type WebScreenRecordingHost = Readonly<{
   resolve(device: DeviceInfo): Promise<WebScreenRecordingTransport | undefined>;
 }>;
 
-/** Closed post-processing authority for stable/playable validation, telemetry, trim, and overlays. */
+/** Closed post-processing authority for stable/playable validation, telemetry, and overlays. */
 export type ScreenRecordingFinalizer = Readonly<{
   complete(
     input: Readonly<{
@@ -192,7 +246,6 @@ export type ScreenRecordingFinalizer = Readonly<{
       showTouches: boolean;
       gestureEvents: readonly RecordingGestureEvent[];
       exportQuality?: RecordingExportQuality;
-      trimStartMs?: number;
       targetLabel: string;
     }>,
     signal?: AbortSignal,

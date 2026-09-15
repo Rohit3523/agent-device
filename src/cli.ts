@@ -7,11 +7,11 @@ import {
   throwDaemonError,
   type NormalizedError,
 } from '@agent-device/kernel/errors';
-import { resolveRemoteRequestDiagnosticsPath } from './daemon/session-store.ts';
+import { resolveRemoteRequestDiagnosticsPath } from './daemon/session-artifact-paths.ts';
 import { exitAfterFlush } from './cli/process-exit.ts';
 import { readVersion } from '@agent-device/host-kit/version';
 import { pathToFileURL } from 'node:url';
-import { sendToDaemon } from './daemon/client/daemon-client.ts';
+import { sendToDaemon } from './daemon-client/daemon-client.ts';
 import fs from 'node:fs';
 import type { BatchStep } from '@agent-device/contracts/client';
 import type { ReplayTestReporterRuntime } from './cli/replay-test/reporting.ts';
@@ -38,7 +38,7 @@ import {
   registerDiagnosticSensitiveValue,
   withDiagnosticsScope,
 } from '@agent-device/host-kit/diagnostics';
-import { resolveDaemonPaths } from './daemon/config.ts';
+import { resolveDaemonPaths } from './daemon-resolution.ts';
 import { applyDefaultPlatformBinding, resolveBindingSettings } from './cli/session-binding.ts';
 import { resolveCliOptions } from './cli/resolve-cli-options.ts';
 import { maybeRunUpgradeNotifier } from './cli/update-check.ts';
@@ -47,7 +47,7 @@ import {
   type RemoteConnectionRequestMetadata,
 } from './remote/remote-connection-state.ts';
 import { resolveRemoteAuthForCli } from './cli/auth-session.ts';
-import type { FlagKey } from './commands/cli-grammar/flag-types.ts';
+import type { FlagKey } from '@agent-device/command-registry/flag-types';
 import type { CliFlags } from '@agent-device/contracts/command';
 import type { SessionRuntimeHints } from '@agent-device/kernel/contracts';
 import { INTERNAL_COMMANDS, isKnownCliCommandName } from '@agent-device/command-registry/catalog';
@@ -462,6 +462,7 @@ function buildClientConfig(ctx: CliRunContext): AgentDeviceClientConfig {
     providerDeviceOrientation: currentFlags.providerDeviceOrientation,
     providerGeoLocation: currentFlags.providerGeoLocation,
     providerTimezone: currentFlags.providerTimezone,
+    providerAppiumVersion: currentFlags.providerAppiumVersion,
     providerLanguage: currentFlags.providerLanguage,
     providerLocale: currentFlags.providerLocale,
     providerNetworkProfile: currentFlags.providerNetworkProfile,

@@ -825,70 +825,6 @@ extension RunnerTests {
     XCTAssertTrue(response.error?.hint?.contains("runner session will be restarted") == true)
   }
 
-#if os(iOS)
-  func testAlertResolutionCannotBypassRequestedDeadline() throws {
-    final class ResultBox {
-      var error: Error?
-      var probeDeadline: Date?
-      var observedDeadline: Date?
-      var commandStartedAt: Date?
-    }
-    let box = ResultBox()
-    let releaseResolution = DispatchSemaphore(value: 0)
-    let resolutionExited = expectation(description: "bounded alert resolution exited")
-    let commandFinished = expectation(description: "alert command respected its deadline")
-    let command = try runnerCommandFixture(
-      #"{"command":"alert","commandId":"alert-deadline","appBundleId":"com.apple.springboard","action":"get","timeoutMs":500}"#
-    )
-    currentApp = springboard
-    currentBundleId = Self.springboardBundleId
-    systemModalProbeOverrideForTesting = { deadline in
-      box.probeDeadline = deadline
-      return nil
-    }
-    alertResolutionOverrideForTesting = { deadline in
-      box.observedDeadline = deadline
-      _ = releaseResolution.wait(timeout: .now() + 1)
-      resolutionExited.fulfill()
-      return nil
-    }
-    defer {
-      releaseResolution.signal()
-      systemModalProbeOverrideForTesting = nil
-      alertResolutionOverrideForTesting = nil
-      currentApp = nil
-      currentBundleId = nil
-    }
-
-    DispatchQueue(label: "agent-device.runner.tests.alert-deadline").async {
-      box.commandStartedAt = Date()
-      do {
-        _ = try self.executeDispatched(command: command)
-      } catch {
-        box.error = error
-      }
-      commandFinished.fulfill()
-    }
-
-    wait(for: [commandFinished], timeout: 1)
-    let error = box.error as NSError?
-    XCTAssertEqual(error?.domain, RunnerErrorDomain.general)
-    XCTAssertEqual(error?.code, RunnerErrorCode.mainThreadExecutionTimedOut)
-    XCTAssertNotNil(box.probeDeadline)
-    XCTAssertNotNil(box.observedDeadline)
-    if let probeDeadline = box.probeDeadline,
-      let observedDeadline = box.observedDeadline,
-      let commandStartedAt = box.commandStartedAt
-    {
-      XCTAssertEqual(probeDeadline.timeIntervalSince(observedDeadline), 0, accuracy: 0.01)
-      XCTAssertEqual(observedDeadline.timeIntervalSince(commandStartedAt), 0.5, accuracy: 0.05)
-    }
-
-    releaseResolution.signal()
-    wait(for: [resolutionExited], timeout: 1)
-  }
-#endif
-
   func testRunMainThreadWorkExecutesOffMainCallerOnMainThread() {
     final class ResultBox {
       var observedMainThread: Bool?
@@ -1050,6 +986,8 @@ extension RunnerTests {
 
   struct ActiveCommandContext {
     let app: XCUIApplication
+    /// Set when `app` is a system surface served in place over the still-bound session app (#2438).
+    var systemSurface: SystemSurfaceHost? = nil
   }
 
   enum ActiveCommandPreparation {
@@ -1135,10 +1073,7 @@ extension RunnerTests {
       ? Date().addingTimeInterval(Self.alertCommandTimeout(timeoutMs: command.timeoutMs))
       : nil
     if Thread.isMainThread {
-      let routeToSpringboard = shouldRouteToSpringboardBlockingSystemModal(
-        command,
-        deadline: alertDeadline
-      )
+      let routeToSpringboard = shouldRouteToSpringboardBlockingSystemModal(command)
       return try executeOnMainSafely(
         command: command,
         alertDeadline: alertDeadline,
@@ -1148,10 +1083,7 @@ extension RunnerTests {
     // Resolve this before the command's outer main-thread block. If the bounded probe abandons
     // slow XCTest enumeration, return the established recoverable response instead of queueing
     // command preparation behind work that may outlive the 30-second command watchdog.
-    let routeToSpringboard = shouldRouteToSpringboardBlockingSystemModal(
-      command,
-      deadline: alertDeadline
-    )
+    let routeToSpringboard = shouldRouteToSpringboardBlockingSystemModal(command)
     if let unavailable = runnerUnavailableResponse(command: command) {
       return unavailable
     }
@@ -1412,7 +1344,11 @@ extension RunnerTests {
     case .response(let response):
       return response
     case .context(let context):
-      return try executeSnapshotPrepared(command: command, activeApp: context.app)
+      return try executeSnapshotPrepared(
+        command: command,
+        activeApp: context.app,
+        systemSurface: context.systemSurface
+      )
     }
   }
 
@@ -1434,14 +1370,24 @@ extension RunnerTests {
     )
   }
 
-  private func executeSnapshotPrepared(command: Command, activeApp: XCUIApplication) throws -> Response {
+  private func executeSnapshotPrepared(
+    command: Command,
+    activeApp: XCUIApplication,
+    systemSurface: SystemSurfaceHost? = nil
+  ) throws -> Response {
     let options = Self.presentationOptions(from: command)
     do {
-      let payload: DataPayload
+      var payload: DataPayload
       if options.raw {
         payload = try snapshotRaw(app: activeApp, options: options)
       } else {
         payload = try snapshotFast(app: activeApp, options: options)
+      }
+      if let systemSurface {
+        payload.systemSurface = SystemSurfaceProvenancePayload(
+          bundleId: systemSurface.bundleId,
+          kind: systemSurface.kind.rawValue
+        )
       }
       setNeedsPostSnapshotInteractionDelay()
       return Response(ok: true, data: payload)
@@ -1645,10 +1591,20 @@ extension RunnerTests {
     routeToSpringboard: Bool = false
   ) -> ActiveCommandPreparation {
     var activeApp = currentApp ?? app
+    var systemSurface: SystemSurfaceHost? = nil
     if routeToSpringboard {
       activeApp = springboard
     } else if shouldSkipAppActivationPreflight(command) {
       activeApp = resolveAppWithoutActivation(command: command)
+    } else if let presented = presentedSystemSurfaceHost() {
+      // Serve and drive the presented surface IN PLACE: never activate it (that cancels what it
+      // presents) and never adopt it as the cached session target, so once it is gone the next
+      // command resolves back to the still-bound session app (#2438).
+      activeApp = presented.app
+      systemSurface = presented.host
+      if isInteractionCommand(command.command) {
+        applyInteractionStabilizationIfNeeded()
+      }
     } else if !isRunnerLifecycleCommand(command.command) {
       let normalizedBundleId = command.appBundleId?
         .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1709,7 +1665,25 @@ extension RunnerTests {
         applyInteractionStabilizationIfNeeded()
       }
     }
-    return .context(ActiveCommandContext(app: activeApp))
+    return .context(ActiveCommandContext(app: activeApp, systemSurface: systemSurface))
+  }
+
+  /// A registered system surface host that is genuinely on screen, or nil. Presence is foreground
+  /// state, not tree content: a torn-down host still serves a rich tree, and it can only be
+  /// foreground-with-a-stale-tree if something activated it, which the open guard refuses. `state`
+  /// never activates and is cheap when the host is absent. See docs/adr/0004.
+  private func presentedSystemSurfaceHost() -> (host: SystemSurfaceHost, app: XCUIApplication)? {
+#if os(iOS)
+    for host in SystemSurfaceHostRegistry.hosts {
+      let candidate = XCUIApplication(bundleIdentifier: host.bundleId)
+      if candidate.state == .runningForeground {
+        return (host, candidate)
+      }
+    }
+    return nil
+#else
+    return nil
+#endif
   }
 
   func executeOnMainPrepared(
@@ -1865,7 +1839,7 @@ extension RunnerTests {
         )
         let textInput: XCUIElement?
         if !xCTestTextInputProbeSkipped {
-          textInput = textInputAt(app: activeApp, x: x, y: y)
+          textInput = coordinateTapTextInputAt(app: activeApp, x: x, y: y)
         } else {
           // A process-scoped tap cannot authorize later typing without concrete element identity.
           textInput = nil
@@ -1979,21 +1953,25 @@ extension RunnerTests {
           error: ErrorPayload(message: "scroll could not resolve a usable interaction frame")
         )
       }
-      let frame = scrollReferenceFrame(app: activeApp, context: scrollContext)
-      guard frame.width > 0, frame.height > 0 else {
+      let viewport = resolvedScrollViewport(app: activeApp, context: scrollContext)
+      let defaults = runnerDragCommandDefaults(command)
+      switch viewport.gestureDispatch(
+        direction: direction,
+        amount: defaults.scrollAmount,
+        pixels: command.pixels
+      ) {
+      case .occluded(let occlusionKeyboardMinY, let visibleHeight):
+        return scrollKeyboardOccludedResponse(
+          direction: direction.rawValue,
+          keyboardMinY: occlusionKeyboardMinY,
+          visibleHeight: visibleHeight
+        )
+      case .unusableFrame:
         return Response(
           ok: false,
           error: ErrorPayload(message: "scroll could not resolve a usable interaction frame")
         )
-      }
-      let defaults = runnerDragCommandDefaults(command)
-      guard let plan = runnerScrollGesturePlan(
-        direction: direction,
-        amount: defaults.scrollAmount,
-        pixels: command.pixels,
-        referenceWidth: frame.width,
-        referenceHeight: frame.height
-      ) else {
+      case .unusablePlan:
         return Response(
           ok: false,
           error: ErrorPayload(
@@ -2001,21 +1979,24 @@ extension RunnerTests {
             message: "scroll could not compute a gesture plan"
           )
         )
+      case .gesture(let gesture):
+        guard scrollDurationIsValid(command.durationMs) else {
+          return invalidScrollDurationResponse(commandName: "scroll")
+        }
+        return gesture.attachingEvidence(
+          to: executeScrollDragGesture(
+            activeApp: activeApp,
+            x: gesture.planFrame.minX + gesture.plan.x1,
+            y: gesture.planFrame.minY + gesture.plan.y1,
+            x2: gesture.planFrame.minX + gesture.plan.x2,
+            y2: gesture.planFrame.minY + gesture.plan.y2,
+            durationMs: defaults.durationMs,
+            message: "scrolled",
+            context: scrollContext.withReferenceFrame(gesture.coordinateFrame),
+            releaseBehavior: command.scrollReleaseBehavior
+          )
+        )
       }
-      guard scrollDurationIsValid(command.durationMs) else {
-        return invalidScrollDurationResponse(commandName: "scroll")
-      }
-      return executeScrollDragGesture(
-        activeApp: activeApp,
-        x: frame.minX + plan.x1,
-        y: frame.minY + plan.y1,
-        x2: frame.minX + plan.x2,
-        y2: frame.minY + plan.y2,
-        durationMs: defaults.durationMs,
-        message: "scrolled",
-        context: scrollContext.withReferenceFrame(frame),
-        releaseBehavior: command.scrollReleaseBehavior
-      )
     case .desktopScroll:
       guard let rawDirection = command.direction,
         let direction = RunnerScrollDirection(rawValue: rawDirection)
@@ -2590,12 +2571,30 @@ extension RunnerTests {
     )
   }
 
-  private func scrollReferenceFrame(app: XCUIApplication, context: SynthesizedCoordinateContext) -> CGRect {
-#if os(iOS)
-    return synthesizedFrameAvoidingKeyboardWhenAllowed(app: app, context: context)
-#else
-    return resolvedTouchReferenceFrame(app: app, appFrame: app.frame)
-#endif
+  /// Adds the #2500 avoidance evidence to a scroll response. Only the frame resolver knows whether
+  /// it trimmed the swipe for a keyboard, and only `scroll` has this evidence to carry, so it is
+  /// attached where the frame was resolved rather than threaded through every gesture response.
+  /// The refusal a keyboard forces. It performs no gesture: swiping into the keys would leave the
+  /// surface where it was, which the daemon's no-progress fingerprint reads as a stuck container
+  /// (#2499) and an agent reads as a broken scroll. The TS owner maps the code to the
+  /// `scroll_keyboard_occludes_surface` reason and the "dismiss the keyboard" hint.
+  private func scrollKeyboardOccludedResponse(
+    direction: String,
+    keyboardMinY: Double,
+    visibleHeight: Double
+  ) -> Response {
+    return Response(
+      ok: false,
+      error: ErrorPayload(
+        code: ScrollViewportPolicy.occlusionRunnerCode,
+        message: String(
+          format:
+            "scroll %@ refused: the keyboard leaves %.0fpt of visible surface above it, too little to swipe",
+          direction,
+          visibleHeight
+        )
+      )
+    )
   }
 
   private func dragCommandName(message: String) -> String {
@@ -2652,11 +2651,10 @@ extension RunnerTests {
   }
 
   private func shouldRouteToSpringboardBlockingSystemModal(
-    _ command: Command,
-    deadline: Date? = nil
+    _ command: Command
   ) -> Bool {
 #if os(iOS)
-    guard command.command == .alert || isCoordinateOnlyTap(command) else {
+    guard isCoordinateOnlyTap(command) else {
       return false
     }
     #if AGENT_DEVICE_RUNNER_UNIT_TESTS
@@ -2664,8 +2662,7 @@ extension RunnerTests {
       return override
     }
     #endif
-    let budgetDeadline = Date().addingTimeInterval(systemModalProbeBudget)
-    let probeDeadline = deadline.map { min($0, budgetDeadline) } ?? budgetDeadline
+    let probeDeadline = Date().addingTimeInterval(systemModalProbeBudget)
     // `runMainThreadWork` executes inline for a main-thread caller, so that path cannot use its
     // timeout machinery. Direct main-thread dispatch keeps the prior synchronous modal check;
     // normal off-main command dispatch uses the bounded probe and post-probe busy recovery.

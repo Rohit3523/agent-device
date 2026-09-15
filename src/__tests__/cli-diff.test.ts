@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { PNG } from '@agent-device/capture-kit/png';
-import type { DaemonResponse } from '../daemon/client/daemon-client.ts';
+import type { DaemonResponse } from '../daemon-client/daemon-client.ts';
 import {
   runCliCapture as captureCli,
   type CapturedCliRun,
@@ -268,6 +268,46 @@ describe('cli diff commands', () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  test.each([false, true])(
+    'diff screenshot honors threshold 1 for saved images (json=%s)',
+    async (json) => {
+      const dir = mkdtempForTestSync('cli-diff-threshold-');
+      const baseline = path.join(dir, 'baseline.png');
+      const current = path.join(dir, 'current.png');
+      const diffOut = path.join(dir, 'diff.png');
+      fs.writeFileSync(baseline, solidPngBuffer(2, 2, { r: 0, g: 0, b: 0 }));
+      fs.writeFileSync(current, solidPngBuffer(2, 2, { r: 255, g: 255, b: 255 }));
+      fs.writeFileSync(diffOut, 'stale diff');
+
+      const result = await runCliCapture([
+        'diff',
+        'screenshot',
+        '--baseline',
+        baseline,
+        current,
+        '--threshold',
+        '1',
+        '--out',
+        diffOut,
+        ...(json ? ['--json'] : []),
+      ]);
+      assert.equal(result.code, null);
+      assert.equal(result.calls.length, 0);
+      assert.equal(result.stderr, '');
+      if (json) {
+        const payload = JSON.parse(result.stdout);
+        assert.equal(payload.success, true);
+        assert.equal(payload.data.match, true);
+        assert.equal(payload.data.differentPixels, 0);
+        assert.equal(payload.data.diffPath, undefined);
+      } else {
+        assert.match(result.stdout, /Screenshots match\./);
+        assert.doesNotMatch(result.stdout, /Diff image:/);
+      }
+      assert.equal(fs.existsSync(diffOut), false);
+    },
+  );
 
   test('diff screenshot rejects overlay refs with supplied current image', async () => {
     const dir = mkdtempForTestSync('cli-diff-test-');

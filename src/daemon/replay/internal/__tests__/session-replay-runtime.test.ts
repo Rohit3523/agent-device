@@ -2,8 +2,9 @@ import { isSessionRecording } from '../../../session-script-publication-capabili
 import { test, expect, vi, beforeEach } from 'vitest';
 import { mkdtempForTestSync } from '../../../../__tests__/test-utils/tmp-dir.ts';
 
-vi.mock('../../../../core/dispatch-resolve.ts', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../../../core/dispatch-resolve.ts')>();
+vi.mock('@agent-device/device-selection/dispatch-resolve', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@agent-device/device-selection/dispatch-resolve')>();
   return { ...actual, resolveTargetDevice: vi.fn() };
 });
 
@@ -64,7 +65,7 @@ test('a successful replay prints one line with the step count and wall time', as
 // producer (`completeReplayRun`'s `sessionStore.get(sessionName)` check), not
 // asserted against a hand-crafted fixture — deleting that line would fail
 // these, unlike the client-lifecycle tests in
-// `src/daemon/client/__tests__/daemon-client-lifecycle.test.ts`, which only prove the
+// `src/daemon-client/__tests__/daemon-client-lifecycle.test.ts`, which only prove the
 // CLIENT'S reaction to a `sessionActive` value it is handed. ---
 
 test('a close-less replay reports sessionActive: true (real producer, session still in the store)', async () => {

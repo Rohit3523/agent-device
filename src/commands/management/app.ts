@@ -1,8 +1,7 @@
 import { PUBLIC_COMMANDS } from '@agent-device/command-registry/catalog';
 import type { AppCloseOptions, AppOpenOptions } from '@agent-device/contracts/client';
-import { DEFAULT_APPS_FILTER } from '@agent-device/contracts/device';
 import { SESSION_SURFACES } from '@agent-device/contracts/session';
-import type { CommandSchemaOverride } from '../../cli-schema/types.ts';
+import type { CommandSchemaOverride } from '@agent-device/command-registry/command-schema';
 import { assertResolvedAppsFilter } from './app-inventory-contract.ts';
 import {
   booleanField,
@@ -10,13 +9,14 @@ import {
   enumField,
   integerField,
   jsonSchemaField,
+  optionField,
   stringArrayField,
   stringField,
   stringSchema,
 } from '../command-input.ts';
 import { commonInputFromFlags, direct, optionalString } from '../cli-grammar/common.ts';
 import type { CliReader, CommandInput, DaemonWriter } from '../cli-grammar/types.ts';
-import { METRO_RELOAD_FLAGS } from '../cli-grammar/flag-groups.ts';
+import { METRO_RELOAD_FLAGS } from '@agent-device/command-registry/flag-groups';
 import { defineCommandFacet } from '../family/types.ts';
 import { defineFieldCommandMetadata } from '../field-command-contract.ts';
 import { withCommandRuntimeHints } from '../runtime-hints.ts';
@@ -49,9 +49,11 @@ const openCommandMetadata = defineFieldCommandMetadata(
       'Launch arguments forwarded verbatim to the platform launch command.',
     ),
     relaunch: booleanField('Force relaunch.'),
-    foreground: booleanField(
-      'Include an initial interactive snapshot in a fresh open response. With no app argument, discover the sole running app on the sole booted iOS simulator; ambiguous environments fail closed.',
+    timeoutMs: integerField(
+      'Startup budget in milliseconds. Bounds the Simulator boot wait, so a never-booted Simulator can finish its first-boot migration; omit for the default startup behavior.',
+      { min: 1 },
     ),
+    foreground: optionField('foreground'),
     saveScript: jsonSchemaField<boolean | string>({
       oneOf: [booleanSchema(), stringSchema()],
     }),
@@ -105,7 +107,6 @@ function toAppOpenOptions(
 
 const appsCliSchema = {
   allowedFlags: ['appsFilter'],
-  defaults: { appsFilter: DEFAULT_APPS_FILTER },
 } as const satisfies CommandSchemaOverride;
 
 const openCliSchema = {
@@ -121,6 +122,7 @@ const openCliSchema = {
     'noRecord',
     'relaunch',
     'foreground',
+    'timeoutMs',
     'surface',
     ...METRO_RELOAD_FLAGS,
     'launchUrl',
@@ -147,6 +149,7 @@ const openCliReader: CliReader = (positionals, flags) => ({
   launchArgs: flags.launchArgs,
   relaunch: flags.relaunch,
   foreground: flags.foreground,
+  timeoutMs: flags.timeoutMs,
   saveScript: flags.saveScript,
   force: flags.force,
   deviceHub: flags.deviceHub,

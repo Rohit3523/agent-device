@@ -1,6 +1,19 @@
 import type { SessionAction } from '@agent-device/contracts/session';
+import type { SessionRuntimeHints } from '@agent-device/kernel/contracts';
 import { appendScreenshotScriptFlags } from '@agent-device/contracts/capture';
 import { splitRefGenerationSuffix } from '@agent-device/kernel/snapshot';
+
+const SCRIPT_RUNTIME_PLATFORMS = {
+  ios: true,
+  android: true,
+  harmonyos: true,
+} satisfies Record<NonNullable<SessionRuntimeHints['platform']>, true>;
+
+function isScriptRuntimePlatform(
+  value: unknown,
+): value is NonNullable<SessionRuntimeHints['platform']> {
+  return typeof value === 'string' && Object.hasOwn(SCRIPT_RUNTIME_PLATFORMS, value);
+}
 
 /**
  * #1076 versioned refs: a recorded ref positional may carry a `~s<generation>`
@@ -164,19 +177,10 @@ export function appendScriptSeriesFlags(
 
 export function appendRuntimeHintFlags(
   parts: string[],
-  flags:
-    | Pick<SessionAction, 'flags'>['flags']
-    | {
-        platform?: 'ios' | 'android';
-        metroHost?: string;
-        metroPort?: number;
-        bundleUrl?: string;
-        launchUrl?: string;
-      }
-    | undefined,
+  flags: Pick<SessionAction, 'flags'>['flags'] | SessionRuntimeHints | undefined,
 ): void {
   if (!flags) return;
-  if (flags.platform === 'ios' || flags.platform === 'android') {
+  if (isScriptRuntimePlatform(flags.platform)) {
     parts.push('--platform', flags.platform);
   }
   if (typeof flags.metroHost === 'string' && flags.metroHost.length > 0) {
@@ -323,29 +327,17 @@ export function parseReplaySeriesFlags(
 // fallow-ignore-next-line complexity
 export function parseReplayRuntimeFlags(args: string[]): {
   positionals: string[];
-  flags: {
-    platform?: 'ios' | 'android';
-    metroHost?: string;
-    metroPort?: number;
-    bundleUrl?: string;
-    launchUrl?: string;
-  };
+  flags: SessionRuntimeHints;
 } {
   const positionals: string[] = [];
-  const flags: {
-    platform?: 'ios' | 'android';
-    metroHost?: string;
-    metroPort?: number;
-    bundleUrl?: string;
-    launchUrl?: string;
-  } = {};
+  const flags: SessionRuntimeHints = {};
 
   for (let index = 0; index < args.length; index += 1) {
     const token = args[index]!;
     const nextArg = args[index + 1];
     if (token === '--platform' && nextArg !== undefined) {
       const platform = nextArg;
-      if (platform === 'ios' || platform === 'android') {
+      if (isScriptRuntimePlatform(platform)) {
         flags.platform = platform;
       }
       index += 1;

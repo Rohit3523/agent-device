@@ -1,8 +1,15 @@
 import type { CommandFlags } from '@agent-device/contracts/command';
 import { screenshotFlagsFromOptions } from '@agent-device/contracts/capture';
-import { leaseScopeFromOptions, leaseScopeToCommandFlags } from '../core/lease-scope.ts';
+import {
+  leaseScopeFromOptions,
+  leaseScopeToCommandFlags,
+} from '@agent-device/contracts/lease-scope';
 import { stripUndefined } from '@agent-device/kernel/record';
-import { getFlagDefinitions } from './cli-grammar/flag-registry.ts';
+import {
+  SNAPSHOT_COMMAND_OPTION_KEYS,
+  snapshotFlagsFromOptions,
+} from '@agent-device/kernel/snapshot';
+import { getFlagDefinitions } from '@agent-device/command-registry/flag-registry';
 import type { InternalRequestOptions } from '@agent-device/contracts/client';
 import type { CommandMetadata } from './command-contract.ts';
 
@@ -28,6 +35,7 @@ function buildFlags(options: InternalRequestOptions): CommandFlags {
     providerDeviceOrientation: options.providerDeviceOrientation,
     providerGeoLocation: options.providerGeoLocation,
     providerTimezone: options.providerTimezone,
+    providerAppiumVersion: options.providerAppiumVersion,
     providerLanguage: options.providerLanguage,
     providerLocale: options.providerLocale,
     providerNetworkProfile: options.providerNetworkProfile,
@@ -66,12 +74,7 @@ function buildFlags(options: InternalRequestOptions): CommandFlags {
     metroPort: options.metroPort,
     bundleUrl: options.bundleUrl,
     launchUrl: options.launchUrl,
-    snapshotInteractiveOnly: options.interactiveOnly,
-    snapshotDepth: options.depth,
-    snapshotScope: options.scope,
-    snapshotRaw: options.raw,
-    snapshotCustomActions: options.customActions,
-    snapshotForceFull: options.forceFull,
+    ...snapshotFlagsFromOptions(options, SNAPSHOT_COMMAND_OPTION_KEYS),
     ...screenshotFlagsFromOptions(options),
     appsFilter: options.appsFilter,
     kind: options.kind,
@@ -87,6 +90,7 @@ function buildFlags(options: InternalRequestOptions): CommandFlags {
     holdMs: options.holdMs,
     jitterPx: options.jitterPx,
     pixels: options.pixels,
+    until: options.until,
     doubleTap: options.doubleTap,
     verify: options.verify,
     settle: options.settle,

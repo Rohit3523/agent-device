@@ -84,10 +84,12 @@ export type CanonicalCommand =
   | { kind: 'waitForAnimationToEnd'; timeout?: number | string }
   | { kind: 'stopApp' }
   | { kind: 'setPermissions'; appId?: string; permissions?: Record<string, string> }
+  | { kind: 'clearState'; appId?: string }
   | { kind: 'repeat'; times: string | number }
   | { kind: 'retry'; maxRetries?: string | number }
   | { kind: 'runFlow'; label?: string; source: 'file' | 'commands' }
   | { kind: 'runScript' }
+  | { kind: 'evalScript' }
   | { kind: 'unsupported'; command: string };
 
 // ---------------------------------------------------------------------------
@@ -98,6 +100,28 @@ export type CanonicalCommand =
 const UPSTREAM_CONFIG_TYPES = new Set(['ApplyConfigurationCommand', 'DefineVariablesCommand']);
 
 type UpstreamCommand = { type: string; fields: Record<string, unknown> };
+
+function canonicalizeUpstreamLifecycleCommand(
+  command: UpstreamCommand,
+): CanonicalCommand | undefined {
+  const f = command.fields;
+  switch (command.type) {
+    case 'LaunchAppCommand':
+      return dropUndefined({
+        kind: 'launchApp' as const,
+        appId: str(f.appId),
+        clearState: bool(f.clearState),
+        stopApp: bool(f.stopApp),
+        permissions: permissionsRecord(f.permissions),
+      });
+    case 'StopAppCommand':
+      return { kind: 'stopApp' };
+    case 'ClearStateCommand':
+      return dropUndefined({ kind: 'clearState' as const, appId: str(f.appId) });
+    default:
+      return undefined;
+  }
+}
 
 export function canonicalizeUpstreamFlow(commands: UpstreamCommand[]): CanonicalCommand[] {
   return commands
@@ -116,18 +140,12 @@ const BARE_UPSTREAM_CANONICAL: Record<string, CanonicalCommand> = {
 };
 
 function canonicalizeUpstreamCommand(command: UpstreamCommand): CanonicalCommand {
+  const lifecycle = canonicalizeUpstreamLifecycleCommand(command);
+  if (lifecycle) return lifecycle;
   const bare = BARE_UPSTREAM_CANONICAL[command.type];
   if (bare) return bare;
   const f = command.fields;
   switch (command.type) {
-    case 'LaunchAppCommand':
-      return dropUndefined({
-        kind: 'launchApp',
-        appId: str(f.appId),
-        clearState: bool(f.clearState),
-        stopApp: bool(f.stopApp),
-        permissions: permissionsRecord(f.permissions),
-      });
     case 'TapOnElementCommand': {
       const repeat = asRecord(f.repeat);
       return canonicalTap({
@@ -227,6 +245,8 @@ function canonicalizeUpstreamCommand(command: UpstreamCommand): CanonicalCommand
         label: str(f.label),
         source: f.sourceDescription != null ? 'file' : 'commands',
       });
+    case 'EvalScriptCommand':
+      return { kind: 'evalScript' };
     default:
       return { kind: 'unsupported', command: unsupportedName(command.type) };
   }
@@ -334,7 +354,6 @@ const BARE_AGENT_CANONICAL = {
   back: { kind: 'back' },
   hideKeyboard: { kind: 'hideKeyboard' },
   takeScreenshot: { kind: 'takeScreenshot' },
-  stopApp: { kind: 'stopApp' },
   runScript: { kind: 'runScript' },
 } satisfies Record<string, CanonicalCommand>;
 
@@ -342,6 +361,37 @@ type BareAgentCommand = Extract<MaestroCommand, { kind: keyof typeof BARE_AGENT_
 
 function isBareAgentCommand(command: MaestroCommand): command is BareAgentCommand {
   return command.kind in BARE_AGENT_CANONICAL;
+}
+
+type AgentLifecycleCommand = Extract<
+  MaestroCommand,
+  { kind: 'launchApp' | 'stopApp' | 'clearState' }
+>;
+
+function isAgentLifecycleCommand(command: MaestroCommand): command is AgentLifecycleCommand {
+  return (
+    command.kind === 'launchApp' || command.kind === 'stopApp' || command.kind === 'clearState'
+  );
+}
+
+function canonicalizeAgentLifecycleCommand(
+  command: AgentLifecycleCommand,
+  config: MaestroProgram['config'],
+): CanonicalCommand {
+  switch (command.kind) {
+    case 'launchApp':
+      return dropUndefined({
+        kind: 'launchApp',
+        appId: command.appId ?? config.appId,
+        clearState: command.clearState,
+        stopApp: command.stopApp,
+        permissions: command.permissions,
+      });
+    case 'stopApp':
+      return { kind: 'stopApp' };
+    case 'clearState':
+      return dropUndefined({ kind: 'clearState', appId: command.appId ?? config.appId });
+  }
 }
 
 type AgentTapCommand = Extract<MaestroCommand, { kind: (typeof AGENT_TAP_KINDS)[number] }>;
@@ -441,18 +491,11 @@ function canonicalizeAgentCommand(
   command: MaestroCommand,
   config: MaestroProgram['config'],
 ): CanonicalCommand {
+  if (isAgentLifecycleCommand(command)) return canonicalizeAgentLifecycleCommand(command, config);
   if (isBareAgentCommand(command)) return BARE_AGENT_CANONICAL[command.kind];
   if (isAgentTapCommand(command)) return canonicalizeAgentTapCommand(command);
   if (isAgentAssertCommand(command)) return canonicalizeAgentAssertCommand(command);
   switch (command.kind) {
-    case 'launchApp':
-      return dropUndefined({
-        kind: 'launchApp',
-        appId: command.appId ?? config.appId,
-        clearState: command.clearState,
-        stopApp: command.stopApp,
-        permissions: command.permissions,
-      });
     case 'swipe':
       return { kind: 'swipe', label: command.label, gesture: agentGesture(command.gesture) };
     case 'inputText':
@@ -496,6 +539,8 @@ function canonicalizeAgentCommand(
         label: command.label,
         source: command.include.kind === 'file' ? 'file' : 'commands',
       });
+    case 'evalScript':
+      return { kind: 'evalScript' };
     default: {
       const exhaustive: never = command;
       throw new Error(`Unhandled agent command: ${JSON.stringify(exhaustive)}`);

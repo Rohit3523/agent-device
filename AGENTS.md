@@ -56,9 +56,8 @@ Read the declaration rather than maintaining a prose copy:
   `src/commands/common-input-fields.ts` and `src/commands/input-audience.ts`
 
 Shared selector parsing and matching belongs in `@agent-device/selectors`; request cancellation
-and progress in `@agent-device/capture-kit` (`request-cancel`, `request-progress`); cross-layer
-contracts in `@agent-device/contracts`; CLI flags in `src/commands/cli-grammar`; cross-surface schema
-composition in `src/cli-schema`.
+and progress in `@agent-device/host-kit/request`; cross-layer contracts in `packages/contracts/src`;
+CLI flags in `src/commands/cli-grammar`; cross-surface schema composition in `src/cli-schema`.
 
 Resolve registry completeness failures at the missing declaration. Diagnose other gate failures
 at their reported invariant; do not suppress them or add an allowlist to get a pass. Build interaction
@@ -82,13 +81,11 @@ under `contracts/fixtures/`.
 
 - Name modules for the domain question they answer and colocate machine-readable claims with their
   enforcement. Internal barrels are legacy; add barrels only at package boundaries.
-- Implementation files target at most 300 lines. Extract before adding behavior past 500 lines;
-  files past 1,000 lines are architecture debt unless generated or fixture data.
+- Files past 1,000 lines are architecture debt; split them before adding behavior, unless they
+  are generated or fixture data.
 - Tests mirror source topology one-to-one. Split a source module and its test together; do not add to
   the legacy `interaction.test.ts` or platform `index.test.ts` aggregations. Pure moves carry their
   tests unchanged; rename-only hunks owe no new coverage.
-- `src/daemon/handlers/session.ts` is already over budget; extract the relevant platform-specific
-  concept before adding behavior.
 
 ## Toolchain and worktree traps
 
@@ -104,8 +101,8 @@ under `contracts/fixtures/`.
 
 ## Runtime and diagnostics seams
 
-Diagnostics use `@agent-device/capture-kit/diagnostics`. Request diagnostics belong in the session request log;
-session artifact paths come from `src/daemon/session-store.ts`. App/device logs remain in `app.log`;
+Diagnostics use `@agent-device/host-kit/diagnostics`. Request diagnostics belong in the session request log;
+session artifact paths come from `src/daemon/session-artifact-paths.ts`. App/device logs remain in `app.log`;
 Apple runner and xcodebuild output remains in `runner.log`.
 
 Normalize failures with `normalizeError` and preserve `hint`, `diagnosticId`, `logPath`, and typed

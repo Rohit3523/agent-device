@@ -216,11 +216,23 @@ export type MaestroSetPermissionsCommand = MaestroOptionalCommand & {
   label?: string;
 };
 
+export type MaestroClearStateCommand = {
+  kind: 'clearState';
+  source: MaestroSourceLocation;
+  appId?: string;
+};
+
 export type MaestroRunScriptCommand = {
   kind: 'runScript';
   source: MaestroSourceLocation;
   file: string;
   env?: Record<string, string | number | boolean>;
+};
+
+export type MaestroEvalScriptCommand = {
+  kind: 'evalScript';
+  source: MaestroSourceLocation;
+  script: string;
 };
 
 export type MaestroRunFlowCondition = {
@@ -275,7 +287,9 @@ export type MaestroCommand =
   | MaestroWaitForAnimationToEndCommand
   | MaestroStopAppCommand
   | MaestroSetPermissionsCommand
+  | MaestroClearStateCommand
   | MaestroRunScriptCommand
+  | MaestroEvalScriptCommand
   | MaestroRunFlowCommand
   | MaestroRepeatCommand
   | MaestroRetryCommand;

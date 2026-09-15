@@ -7,7 +7,7 @@ import {
   type MaestroPlatform,
 } from '@agent-device/maestro';
 import { AppError } from '@agent-device/kernel/errors';
-import { resolveTargetDevice } from '../../../core/dispatch-resolve.ts';
+import { resolveTargetDevice } from '@agent-device/device-selection/dispatch-resolve';
 import { getRequestSignal } from '@agent-device/host-kit/request';
 import { stripUndefined } from '@agent-device/kernel/record';
 import {
@@ -127,6 +127,9 @@ async function executeTypedMaestroReplay(
     signal: context.signal,
     from: req.flags?.replayFrom,
     planDigest: req.flags?.replayPlanDigest,
+    // evalScript runs via node:vm, which is not a security sandbox; only trust it
+    // for flows that did not arrive over the daemon's remote HTTP surface.
+    trustedScripts: req.internal?.publicNetworkOnly !== true,
     // #1802: `runFlow` includes resolve out of the caller's bundle, so a local
     // and a remote run compile the same flow closure.
     readSource: (includePath) => readReplayScriptSourceFile(bundle, includePath),

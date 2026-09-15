@@ -20,6 +20,7 @@ function importEdge(file: string, target: string): ResolvedImportEdge {
     dynamic: false,
     typeOnly: true,
     symbols: [],
+    bindingResidue: false,
     fromZone: targetDagZone(file),
     toZone: targetDagZone(target),
   };
@@ -105,6 +106,38 @@ test('R10 banks an R7 shrink with no edit anywhere', () => {
   );
 });
 
+test('R10 forbids the daemon importing the CLI schema layer, value or type', () => {
+  const valueEdge: ResolvedImportEdge = {
+    ...importEdge('src/daemon/request-execution-scope.ts', 'src/cli-schema/command-schema.ts'),
+    typeOnly: false,
+  };
+  const typeEdge = importEdge(
+    'src/daemon/session-action-recorder.ts',
+    'src/cli-schema/command-schema.ts',
+  );
+  const violations = checkDaemonModularityRatchets(
+    [...baselineEdges(), valueEdge, typeEdge],
+    REFERENCE,
+    REFERENCE,
+  );
+  assert.deepEqual(
+    violations.map(({ rule, file }) => ({ rule, file })),
+    [
+      { rule: 'R10 daemon-modularity', file: 'src/daemon/request-execution-scope.ts' },
+      { rule: 'R10 daemon-modularity', file: 'src/daemon/session-action-recorder.ts' },
+    ],
+  );
+  assert.match(violations[0]!.message, /must not import src\/cli-schema\/command-schema\.ts/);
+});
+
+test('R10 permits a non-daemon importer of the CLI schema layer', () => {
+  const cliEdge = importEdge('src/cli/parser/args.ts', 'src/cli-schema/command-schema.ts');
+  assert.deepEqual(
+    checkDaemonModularityRatchets([...baselineEdges(), cliEdge], REFERENCE, REFERENCE),
+    [],
+  );
+});
+
 test('external daemon request/session-state importer membership changes require the baseline to change', () => {
   const edges = resolveImportEdges(
     new Map([
@@ -122,7 +155,14 @@ test('external daemon request/session-state importer membership changes require 
     REFERENCE,
   );
   assert.equal(violations.length, 1);
-  assert.match(violations[0]!.message, /may only shrink from the recorded 2/);
+  // The recorded list owns its own size (#2342 relocated five client files into it), so the
+  // message assertion reads it rather than pinning a literal that the baseline would outgrow.
+  assert.match(
+    violations[0]!.message,
+    new RegExp(
+      `may only shrink from the recorded ${DAEMON_MODULARITY_BASELINE.externalDaemonTypesImporters.length}`,
+    ),
+  );
 
   const removed = checkDaemonModularityRatchets(
     baselineDaemonTypesEdges().slice(1),

@@ -1,11 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { resolveDaemonPaths } from '../src/daemon/config.ts';
-import {
-  isAgentDeviceDaemonProcess,
-  stopProcessForTakeover,
-} from '../src/daemon/daemon-process.ts';
+import { resolveDaemonPaths } from '../src/daemon-resolution.ts';
+import { isAgentDeviceDaemonProcess, stopProcessForTakeover } from '../src/daemon-process.ts';
 
 const DAEMON_TERM_TIMEOUT_MS = 15_000;
 const DAEMON_KILL_TIMEOUT_MS = 2_000;

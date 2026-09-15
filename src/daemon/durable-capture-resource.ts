@@ -7,6 +7,7 @@ import {
   recoverDurableCaptureResource,
   recoverDurableCaptureResourcesAfterDaemonLock,
   type AdoptStartedDurableCaptureParams,
+  type DurableCaptureFinishIntent,
   type DurableCaptureRecoveryParams,
   type DurableCaptureResourceDefinition,
   type DurableCaptureSessionStore,
@@ -21,6 +22,8 @@ import { safeSessionName } from './session-paths.ts';
 import type { SessionStore } from './session-store.ts';
 import type { SessionState } from './session-state.ts';
 import type { DurableSessionResourceKind } from './durable-session-resource-kinds.ts';
+
+export type { DurableCaptureFinishIntent };
 
 type AdoptStartedSessionCaptureParams<K extends string, H extends AsyncDisposable> = Omit<
   AdoptStartedDurableCaptureParams<K, H, SessionState>,
@@ -44,7 +47,7 @@ export function createDurableCaptureResource<
   H extends LiveResourceHandle<C>,
   C,
 >(definition: DurableCaptureResourceDefinition<K, H, C, SessionState>) {
-  const resourcePath = (
+  const sessionResourcePath = (
     sessionStore: DurableCaptureSessionStore<SessionState>,
     sessionName: string,
   ): string => definition.store.resolvePath(sessionStore.resolveSessionDir(sessionName));
@@ -58,6 +61,8 @@ export function createDurableCaptureResource<
 
   return Object.freeze({
     store: definition.store,
+    /** Where this session's record for this resource lives. */
+    resourcePath: sessionResourcePath,
     createNextFence(params: {
       admissionLedger: DurableCaptureAdmissionLedger;
       resourcePath: string;
@@ -75,18 +80,19 @@ export function createDurableCaptureResource<
             else params.admissionLedger.blockUndurableCleanup(device, outcome.reason);
           },
         },
-        resourcePath(params.sessionStore, params.sessionName),
+        sessionResourcePath(params.sessionStore, params.sessionName),
       );
     },
     finishLive(params: {
       session: SessionState;
       sessionName: string;
       sessionStore: SessionStore;
+      intent: DurableCaptureFinishIntent;
     }): Promise<C> {
       return finishLiveDurableCapture(
         definition,
         params,
-        resourcePath(params.sessionStore, params.sessionName),
+        sessionResourcePath(params.sessionStore, params.sessionName),
       );
     },
     finishRecovered(params: FinishRecoveredDurableCaptureParams<K, H, C>): Promise<C> {

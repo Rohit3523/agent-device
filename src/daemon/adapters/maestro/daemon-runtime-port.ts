@@ -165,7 +165,7 @@ function createDaemonMaestroRuntimeParts(options: CreateDaemonMaestroRuntimeOper
       if (input.permissions) {
         const mutations = mapMaestroSetPermissions(input.permissions, platform);
         if (clearState) {
-          await invokeMutation({ kind: 'clearAppState', ...(appId ? { appId } : {}) }, context);
+          await invokeMutation({ kind: 'clearState', ...(appId ? { appId } : {}) }, context);
         }
         await applyPermissionMutations(appId, mutations, context);
       }
@@ -191,6 +191,10 @@ function createDaemonMaestroRuntimeParts(options: CreateDaemonMaestroRuntimeOper
         mapMaestroSetPermissions(input.permissions, platform),
         context,
       );
+    },
+    clearState: async (input, context) => {
+      const appId = input.appId ?? context.appId;
+      await invokeMutation({ kind: 'clearState', ...(appId ? { appId } : {}) }, context);
     },
     openLink: async (input, context) => {
       await invokeMutation(
