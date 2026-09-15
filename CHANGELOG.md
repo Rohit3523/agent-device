@@ -2,13 +2,9 @@
 
 ## Unreleased
 
-- Added: `settings permission <grant|deny|reset> all` on iOS simulators and Android, plus
-  `calendar`/`location`/`media-library` on Android. `contacts` now fans out to
-  `READ_CONTACTS`+`WRITE_CONTACTS` (like `location` to `FINE`+`COARSE`); named multi-id
-  targets intersect the package's declared permissions so read-only or coarse-only apps
-  succeed, and `deny|reset` of a multi-id target returns a comma-joined `permission` list.
-  The per-platform servable sets live once in `@agent-device/contracts/settings`
-  (`ANDROID_PERMISSION_TARGETS`/`IOS_PERMISSION_TARGETS`).
+- Added (maestro): `setPermissions` and `launchApp.permissions` support `all: allow|deny|unset`
+  on iOS simulators and Android, with specific entries overriding `all`. Both accept a
+  Maestro-style permissions map.
 - Added (ios): `type` and `fill` work in the Apple Pay sheet on iOS Simulator instead of failing
   with `TEXT_INPUT_NOT_FOCUSED`. `com.apple.PassbookUIService` is served in place like the web
   sign-in host (#2438).
