@@ -127,15 +127,7 @@ export async function setAndroidPermission(
   const grants = await readAndroidRuntimePermissionGrants(device, appPackage, userId);
   const revoked = await revokeAndroidPermission(device, appPackage, action, target, userArgs);
   const states = revoked.map((permission) => grants?.get(permission) ?? 'unknown');
-  const priorGrantState: AndroidPriorGrantState = states.includes('granted')
-    ? 'granted'
-    : states.includes('unknown')
-      ? 'unknown'
-      : 'not_granted';
-  const warnings = revoked.flatMap((permission, index) => {
-    const warning = androidRevokedPermissionWarning(appPackage, permission, states[index]!);
-    return warning ? [warning] : [];
-  });
+  const { priorGrantState, warnings } = summarizeRevokedPermissions(appPackage, revoked, states);
   return {
     permission: revoked.join(','),
     priorGrantState,
@@ -530,6 +522,24 @@ async function revokeNamedPmTarget(
     dump.exitCode === 0 ? parseAndroidPackagePermissions(dump.stdout, userId) : undefined;
   const values = filterNamedPmIds(parsed?.requested, target.values, appPackage);
   const grants = parsed?.grants;
+  await applyPmRevoke(device, appPackage, values, action, userArgs);
+  const states = values.map((permission) => grants?.get(permission) ?? 'unknown');
+  const { priorGrantState, warnings } = summarizeRevokedPermissions(appPackage, values, states);
+  return {
+    permission: [...values].join(','),
+    priorGrantState,
+    ...(warnings.length > 0 ? { warnings } : {}),
+  };
+}
+
+/** The `pm revoke` (plus flag-clearing for `reset`) half of a named-target revoke. */
+async function applyPmRevoke(
+  device: DeviceInfo,
+  appPackage: string,
+  values: readonly string[],
+  action: 'deny' | 'reset',
+  userArgs: AndroidUserArgs,
+): Promise<void> {
   for (const value of values) {
     await runAndroidAdb(device, ['shell', 'pm', 'revoke', ...userArgs, appPackage, value]);
   }
@@ -538,21 +548,24 @@ async function revokeNamedPmTarget(
       await clearAndroidPermissionFlags(device, appPackage, value, userArgs);
     }
   }
-  const states = values.map((permission) => grants?.get(permission) ?? 'unknown');
+}
+
+/** One shared summary for every revoke path: the prior-grant verdict plus relaunch warnings. */
+function summarizeRevokedPermissions(
+  appPackage: string,
+  permissions: readonly string[],
+  states: readonly AndroidPriorGrantState[],
+): { priorGrantState: AndroidPriorGrantState; warnings: string[] } {
   const priorGrantState: AndroidPriorGrantState = states.includes('granted')
     ? 'granted'
     : states.includes('unknown')
       ? 'unknown'
       : 'not_granted';
-  const warnings = values.flatMap((permission, index) => {
+  const warnings = permissions.flatMap((permission, index) => {
     const warning = androidRevokedPermissionWarning(appPackage, permission, states[index]!);
     return warning ? [warning] : [];
   });
-  return {
-    permission: [...values].join(','),
-    priorGrantState,
-    ...(warnings.length > 0 ? { warnings } : {}),
-  };
+  return { priorGrantState, warnings };
 }
 
 async function setAndroidPhotoPermission(
