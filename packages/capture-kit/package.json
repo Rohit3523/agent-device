@@ -26,6 +26,10 @@
       "types": "./src/durable-json.ts",
       "default": "./src/durable-json.ts"
     },
+    "./recording-stop-sequence": {
+      "types": "./src/recording/stop-sequence.ts",
+      "default": "./src/recording/stop-sequence.ts"
+    },
     "./ios-snapshot-acquisition": {
       "types": "./src/ios-snapshot-acquisition.ts",
       "default": "./src/ios-snapshot-acquisition.ts"
@@ -81,6 +85,10 @@
     "./react-native-overlay": {
       "types": "./src/react-native-overlay.ts",
       "default": "./src/react-native-overlay.ts"
+    },
+    "./recording-artifact-fixtures": {
+      "types": "./src/recording/artifact.fixtures.ts",
+      "default": "./src/recording/artifact.fixtures.ts"
     },
     "./recording-mp4-fixtures": {
       "types": "./src/recording/mp4.fixtures.ts",

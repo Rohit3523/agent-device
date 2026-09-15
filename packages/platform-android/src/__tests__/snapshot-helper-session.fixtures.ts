@@ -11,7 +11,13 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import net from 'node:net';
 import { PassThrough } from 'node:stream';
-import type { AndroidAdbProcess, AndroidAdbProvider } from '../adb-executor.ts';
+import type {
+  AndroidAdbExecutorResult,
+  AndroidAdbProcess,
+  AndroidAdbProvider,
+} from '../adb-executor.ts';
+import { ANDROID_SNAPSHOT_HELPER_NO_HELPER_ANSWER } from '../snapshot-helper-retirement.ts';
+import type { AndroidSnapshotHelperRuntimeRelease } from '../snapshot-helper-retirement.ts';
 import type { AndroidAdbExecutor } from '../snapshot-helper-types.ts';
 import { bindAndroidAdbTestHost } from './test-utils/android-host-test-setup.ts';
 
@@ -54,6 +60,8 @@ export type PersistentSnapshotHelperProviderOptions = {
   stalledSessionCleanup?: boolean;
   oneShotAttempts?: string[][];
   oneShotXml?: string;
+  /** Make the device-side stop fail the way an unhealthy transport answers. */
+  runtimeStopFailure?: boolean;
 };
 
 export function createPersistentSnapshotHelperProvider(
@@ -153,7 +161,21 @@ export type SessionProviderOptions = {
   shellProtocolV2?: boolean;
   /** Make the `adb features` probe fail the way an adb too old to know the command does. */
   featureProbeFailure?: boolean;
+  /** What the device answers when the teardown reads back whether the helper still runs. */
+  runtimeRelease?: FakeAndroidHelperRuntimeRelease;
 };
+
+/**
+ * What a fake device answers about the helper process. `unreadable` and `closed` are transport faults
+ * adb puts on stderr, one its own failure classifier recognises and one it does not; `signalled` is
+ * an adb client killed before it wrote anything, which the executor reports as an invented exit code
+ * and empty streams. The probe has to fail closed on all three.
+ */
+export type FakeAndroidHelperRuntimeRelease =
+  | Exclude<AndroidSnapshotHelperRuntimeRelease, 'unknown'>
+  | 'unreadable'
+  | 'closed'
+  | 'signalled';
 
 export function createSessionProvider(options: SessionProviderOptions): AndroidAdbProvider {
   bindAndroidAdbTestHost();
@@ -262,6 +284,8 @@ function createSessionExec(options: SessionProviderOptions): AndroidAdbExecutor 
   return async (args, execOptions) => {
     options.calls.push(args);
     if (args[0] === 'features') return adbFeaturesResult(options);
+    if (isAndroidHelperRuntimeProbe(args))
+      return androidHelperRuntimeProbeResult(options.runtimeRelease);
     const forceStopsRuntime = args.join(' ').includes('am force-stop');
     await stallSessionCleanupIfConfigured(options, args, execOptions?.signal, forceStopsRuntime);
     if (options.recoveryFailure && forceStopsRuntime) {
@@ -270,6 +294,28 @@ function createSessionExec(options: SessionProviderOptions): AndroidAdbExecutor 
     await delayForceStopIfConfigured(options, execOptions?.signal, forceStopsRuntime);
     return { exitCode: 0, stdout: '', stderr: '' };
   };
+}
+
+/** Whether an adb call is the helper-process read that decides device automation ownership. */
+export function isAndroidHelperRuntimeProbe(args: readonly string[]): boolean {
+  return args[0] === 'shell' && args[1] === 'pidof';
+}
+
+export function androidHelperRuntimeProbeResult(
+  release: FakeAndroidHelperRuntimeRelease = 'released',
+): AndroidAdbExecutorResult {
+  switch (release) {
+    case 'occupied':
+      return { exitCode: 0, stdout: '4211\n', stderr: '' };
+    case 'released':
+      return { exitCode: 0, stdout: `${ANDROID_SNAPSHOT_HELPER_NO_HELPER_ANSWER}\n`, stderr: '' };
+    case 'unreadable':
+      return { exitCode: 1, stdout: '', stderr: 'error: device offline' };
+    case 'closed':
+      return { exitCode: 1, stdout: '', stderr: 'error: closed' };
+    case 'signalled':
+      return { exitCode: 1, stdout: '', stderr: '' };
+  }
 }
 
 function adbFeaturesResult(options: SessionProviderOptions): {
@@ -405,8 +451,18 @@ function persistentSnapshotExecResult(
   if (args[0] === 'features') {
     return Promise.resolve({ exitCode: 0, stdout: 'cmd\nstat_v2\nshell_v2\n', stderr: '' });
   }
-  if (args[0] === 'forward' || isAndroidHelperRuntimeForceStop(args)) {
+  if (isAndroidHelperRuntimeForceStop(args)) {
+    return Promise.resolve(
+      options.runtimeStopFailure
+        ? { exitCode: 1, stdout: '', stderr: 'error: device offline' }
+        : { exitCode: 0, stdout: '', stderr: '' },
+    );
+  }
+  if (args[0] === 'forward') {
     return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
+  }
+  if (isAndroidHelperRuntimeProbe(args)) {
+    return Promise.resolve(androidHelperRuntimeProbeResult('released'));
   }
   if (args.includes('instrument')) {
     options.oneShotAttempts?.push(args);

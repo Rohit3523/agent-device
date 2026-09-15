@@ -1,7 +1,10 @@
+import { isNativePathDisposition } from '@agent-device/contracts/recording-native-path';
+import { isStopObservation } from '@agent-device/contracts/recording-stop-observation';
 import type {
   ScreenRecordingChunk,
   ScreenRecordingCompletion,
 } from '@agent-device/contracts/screen-recording-runtime';
+import { chunkPathAt } from './chunk-path.ts';
 import type { AndroidRecordingDescriptor, NativeChunk, NativeManifest } from './manifest.ts';
 
 const nativeRecordingPath =
@@ -124,7 +127,17 @@ function isValidCompletion(value: unknown): value is ScreenRecordingCompletion {
   return (
     completionIdentityIsValid(candidate) &&
     completionRecordingIsValid(candidate) &&
+    completionFactsAreValid(candidate) &&
     (candidate.chunks === undefined || candidate.chunks.every(isValidCompletionChunk))
+  );
+}
+
+/** A marker written by an older daemon carries neither field; one with a word no backend reports is not a completion. */
+function completionFactsAreValid(candidate: Partial<ScreenRecordingCompletion>): boolean {
+  return (
+    (candidate.stopObservation === undefined || isStopObservation(candidate.stopObservation)) &&
+    (candidate.nativePathDisposition === undefined ||
+      isNativePathDisposition(candidate.nativePathDisposition))
   );
 }
 
@@ -205,9 +218,9 @@ function completionChunksMatch(
     completion.chunks?.length === expectedChunks &&
     completion.chunks.every(
       (chunk, index) =>
-        chunk.path === chunkPath(outputPath, index + 1) &&
+        chunk.path === chunkPathAt(outputPath, index + 1) &&
         chunk.clientOutPath ===
-          (clientOutputPath === undefined ? undefined : chunkPath(clientOutputPath, index + 1)),
+          (clientOutputPath === undefined ? undefined : chunkPathAt(clientOutputPath, index + 1)),
     )
   );
 }
@@ -250,13 +263,4 @@ function sameApp(
   right: AndroidRecordingDescriptor['activeSessionApp'],
 ): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
-}
-
-function chunkPath(outputPath: string, index: number): string {
-  if (index === 1) return outputPath;
-  const extension = outputPath.lastIndexOf('.');
-  const base =
-    extension > outputPath.lastIndexOf('/') ? outputPath.slice(0, extension) : outputPath;
-  const suffix = extension > outputPath.lastIndexOf('/') ? outputPath.slice(extension) : '.mp4';
-  return `${base}.part-${String(index).padStart(3, '0')}${suffix}`;
 }

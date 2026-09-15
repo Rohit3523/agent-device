@@ -1,10 +1,10 @@
 /**
  * Who owns the device's UiAutomation right now, and how that ownership starts and ends.
  *
- * Android permits ONE UiAutomation owner, so a live helper session is device-exclusive state: this
- * module is the only place that starts one, hands it out, and retires it. Commands run OVER a
- * session (snapshot capture, gestures) live in `snapshot-helper-session.ts`; they acquire through
- * here and never reach the registry themselves.
+ * `am instrument` force-stops whatever is already instrumenting the helper package, so a live helper
+ * session is device-exclusive state: this module is the only place that starts one, hands it out, and
+ * retires it. Commands run OVER a session (snapshot capture, gestures) live in
+ * `snapshot-helper-session.ts`; they acquire through here and never reach the registry themselves.
  */
 import type { AndroidAdbProcess } from './adb-executor.ts';
 import { requireAndroidAdbHost } from './adb-host.ts';
@@ -35,17 +35,17 @@ import {
   ANDROID_SNAPSHOT_HELPER_DEVICE_RETIREMENT_TIMEOUT_MS,
   ANDROID_SNAPSHOT_HELPER_HOST_PROCESS_EXIT_GRACE_MS,
   getAndroidSnapshotHelperSessionDeviceKey,
-  isAndroidSnapshotHelperRetirementUnconfirmedError,
+  hasAndroidSnapshotHelperProcessEnded,
   observeAndroidSnapshotHelperProcessExit,
-  quarantineAndroidSnapshotHelperRetirement,
   recoverAndroidSnapshotHelperRetirement,
+  recordAndroidSnapshotHelperRelease,
   resetAndroidSnapshotHelperRetirements,
+  settleAndroidSnapshotHelperRetirement,
   settleAndroidSnapshotHelperSessionCleanup,
   stopAndroidSnapshotHelperHostProcess,
   waitForAndroidSnapshotHelperProcessExit,
 } from './snapshot-helper-retirement.ts';
 
-const SESSION_READY_TIMEOUT_MS = 10_000;
 const SESSION_STOP_TIMEOUT_MS = 1_000;
 // SnapshotInstrumentation.finishSafely can spend up to 10 seconds waiting for Android to finish
 // connecting UiAutomation. Let an acknowledged quit complete that release before force-killing adb.
@@ -56,6 +56,15 @@ const SESSION_PROCESS_EXIT_TIMEOUT_MS = 2_000;
 const SESSION_CAPTURE_TIMEOUT_MS = 2_000;
 const SESSION_REQUEST_OVERHEAD_MS = 3_000;
 const FORWARD_TIMEOUT_MS = 5_000;
+// A helper that cannot start spends its whole start budget failing, and the one-shot transport that
+// answers afterwards still has to run. Retrying that on the very next command is what made commands
+// on the slow hosts of #2553 take roughly twice as long, so a failed start keeps the persistent path
+// away for at least this long.
+const SESSION_START_RETRY_FLOOR_MS = 10_000;
+// …and for no longer than this, however long the start took. The floor keeps a burst of commands
+// from re-paying an instant failure; the ceiling keeps a host whose helper is simply broken from
+// being written off for longer than a working session would have lasted.
+const SESSION_START_RETRY_CEILING_MS = 60_000;
 
 export type AndroidSnapshotHelperSessionHelperIdentity = {
   packageName: string;
@@ -84,7 +93,8 @@ export type AndroidSnapshotHelperSessionAcquisition = {
 };
 
 const sessions = new Map<string, AndroidSnapshotHelperSession>();
-const disabledSessionIdentities = new Map<string, string>();
+/** Capture identity → when this process may spawn that helper build again after a failed start. */
+const failedStarts = new Map<string, number>();
 
 /**
  * Starts (or reuses) the session without capturing, so a helper-backed read that is not a snapshot
@@ -110,15 +120,15 @@ export async function acquireAndroidSnapshotHelperSession(
   if (!isAndroidSnapshotHelperSessionEnabled() || !options.adbProvider?.spawn) {
     return undefined;
   }
-  const resolved = resolvePersistentSessionCaptureOptions(
-    resolveAndroidSnapshotHelperCaptureOptions(options),
-  );
+  const callerResolved = resolveAndroidSnapshotHelperCaptureOptions(options);
+  const resolved = resolvePersistentSessionCaptureOptions(callerResolved);
   const identity = createSessionIdentity(deviceKey, resolved, options);
   const session = await resolveAndroidSnapshotHelperSession({
     deviceKey,
     identity,
     options,
     resolved,
+    startBudgetMs: resolveAndroidSnapshotHelperStartBudgetMs(callerResolved.commandTimeoutMs),
   });
   return session ? { session, resolved, deviceKey } : undefined;
 }
@@ -138,42 +148,93 @@ async function resolveAndroidSnapshotHelperSession(params: {
   identity: string;
   options: AndroidSnapshotHelperCaptureOptions;
   resolved: AndroidSnapshotHelperResolvedCaptureOptions;
+  startBudgetMs: number;
 }): Promise<AndroidSnapshotHelperSession | undefined> {
-  const { deviceKey, identity, options, resolved } = params;
-  if (disabledSessionIdentities.get(deviceKey) === identity) {
+  if (isAndroidSnapshotHelperStartBackedOff(params.identity)) return undefined;
+  await retireUnusableAndroidSnapshotHelperSession(params.deviceKey, params.identity);
+  return sessions.get(params.deviceKey) ?? (await tryStartAndroidSnapshotHelperSession(params));
+}
+
+/** Drops a cached session this command cannot write to, so only its forward is left behind. */
+async function retireUnusableAndroidSnapshotHelperSession(
+  deviceKey: string,
+  identity: string,
+): Promise<void> {
+  const cached = sessions.get(deviceKey);
+  if (!cached || isReusableAndroidSnapshotHelperSession(cached, identity)) return;
+  // A process that already exited cannot answer the forwarded port, so there is nothing left to ask
+  // it to quit gracefully.
+  await stopAndroidSnapshotHelperSession(deviceKey, {
+    force: hasAndroidSnapshotHelperProcessEnded(cached.process),
+  });
+}
+
+/**
+ * Starts the helper, or answers `undefined` for a start that failed. A start that failed is not a
+ * command that failed — the caller answers with the one-shot transport — and this helper build is
+ * not spawned again until the backoff it just earned is over.
+ */
+async function tryStartAndroidSnapshotHelperSession(params: {
+  deviceKey: string;
+  identity: string;
+  options: AndroidSnapshotHelperCaptureOptions;
+  resolved: AndroidSnapshotHelperResolvedCaptureOptions;
+  startBudgetMs: number;
+}): Promise<AndroidSnapshotHelperSession | undefined> {
+  const startedAtMs = Date.now();
+  try {
+    return await startAndroidSnapshotHelperSession(params);
+  } catch (error) {
+    params.options.signal?.throwIfAborted();
+    failedStarts.set(
+      params.identity,
+      Date.now() + androidSnapshotHelperStartRetryAfterMs(Date.now() - startedAtMs),
+    );
+    emitDiagnostic({
+      level: 'warn',
+      phase: 'android_snapshot_helper_session_start_failed',
+      data: {
+        deviceKey: params.deviceKey,
+        reason: error instanceof AppError ? error.details?.reason : undefined,
+        detail: error instanceof Error ? error.message : String(error),
+      },
+    });
     return undefined;
   }
-  let session = sessions.get(deviceKey);
-  if (session && session.identity !== identity) {
-    await stopAndroidSnapshotHelperSession(deviceKey);
-    session = undefined;
-  }
-  if (!session) {
-    try {
-      session = await startAndroidSnapshotHelperSession({
-        deviceKey,
-        identity,
-        options,
-        resolved,
-      });
-    } catch (error) {
-      options.signal?.throwIfAborted();
-      disabledSessionIdentities.set(deviceKey, identity);
-      emitDiagnostic({
-        level: 'warn',
-        phase: 'android_snapshot_helper_session_disabled',
-        data: {
-          deviceKey,
-          reason: error instanceof Error ? error.message : String(error),
-        },
-      });
-      if (isAndroidSnapshotHelperRetirementUnconfirmedError(error)) {
-        throw error;
-      }
-      return undefined;
-    }
-  }
-  return session;
+}
+
+/** A helper build whose last start failed is left alone until that start's backoff has run out. */
+function isAndroidSnapshotHelperStartBackedOff(identity: string): boolean {
+  const retryAtMs = failedStarts.get(identity);
+  if (retryAtMs === undefined) return false;
+  if (retryAtMs > Date.now()) return true;
+  failedStarts.delete(identity);
+  return false;
+}
+
+/**
+ * How long a failed start earns: as long as it spent failing, because a start that burned half a
+ * minute on a wedged device would burn another half minute on the next command, bounded so a burst
+ * of commands neither re-pays an instant failure nor writes a device off for the rest of the run.
+ */
+function androidSnapshotHelperStartRetryAfterMs(startDurationMs: number): number {
+  return Math.min(
+    Math.max(startDurationMs, SESSION_START_RETRY_FLOOR_MS),
+    SESSION_START_RETRY_CEILING_MS,
+  );
+}
+
+/**
+ * A cached session is worth writing to only while it belongs to this helper build and its
+ * instrumentation process is still running. The helper binds its session socket inside that
+ * process, so a process that has exited has nobody left to accept on the forwarded port: the
+ * command would die on a dead socket and fall back, instead of starting a helper that can answer.
+ */
+function isReusableAndroidSnapshotHelperSession(
+  session: AndroidSnapshotHelperSession,
+  identity: string,
+): boolean {
+  return session.identity === identity && !hasAndroidSnapshotHelperProcessEnded(session.process);
 }
 
 async function startAndroidSnapshotHelperSession(params: {
@@ -181,6 +242,7 @@ async function startAndroidSnapshotHelperSession(params: {
   identity: string;
   options: AndroidSnapshotHelperCaptureOptions;
   resolved: AndroidSnapshotHelperResolvedCaptureOptions;
+  startBudgetMs: number;
 }): Promise<AndroidSnapshotHelperSession> {
   const port = await allocateAndroidSnapshotHelperSessionPort();
   await params.options.adb(['forward', `tcp:${port}`, `tcp:${port}`], {
@@ -219,12 +281,22 @@ async function startAndroidSnapshotHelperSession(params: {
     capturedCount: 0,
   };
   try {
+    // A helper that announces itself late is a slow `am instrument`, which the one-shot transport it
+    // falls back to pays too, so the wait gets a share of the helper-command budget rather than a
+    // smaller guess. The caller's own deadline reaches it as an abort on `options.signal`, which is
+    // what bounds this below the budget when the command itself is short.
     await waitForAndroidSnapshotHelperSessionReady(
       childProcess,
-      SESSION_READY_TIMEOUT_MS,
+      params.startBudgetMs,
       params.options.signal,
     );
     sessions.set(params.deviceKey, session);
+    failedStarts.delete(params.identity);
+    // `am instrument` force-stops whatever is already instrumenting this package, so a helper that
+    // reported itself ready is the only helper process the device has left, and the release the
+    // previous teardown could not prove went away with the process that owed it. Leaving the entry
+    // pending would have the next acquire force-stop the session that just started.
+    settleAndroidSnapshotHelperRetirement(params.deviceKey);
     emitDiagnostic({
       phase: 'android_snapshot_helper_session_ready',
       data: {
@@ -242,7 +314,7 @@ async function startAndroidSnapshotHelperSession(params: {
     } catch {
       // Best effort after startup failure.
     }
-    const [, cleanup] = await Promise.all([
+    await Promise.all([
       waitForAndroidSnapshotHelperProcessExit(
         processExit.ended,
         ANDROID_SNAPSHOT_HELPER_HOST_PROCESS_EXIT_GRACE_MS,
@@ -258,13 +330,14 @@ async function startAndroidSnapshotHelperSession(params: {
         forceStopRuntime: true,
       }),
     ]);
-    if (!cleanup.runtimeForceStopped) {
-      quarantineAndroidSnapshotHelperRetirement({
-        deviceKey: params.deviceKey,
-        packageName: session.helper.packageName,
-        cause: error,
-      });
-    }
+    // What this command reports is the failed start, which the caller answers with the one-shot
+    // transport. Whether the device is still owned is a fact the next acquire reads.
+    await recordAndroidSnapshotHelperRelease({
+      deviceKey: params.deviceKey,
+      packageName: session.helper.packageName,
+      adb: session.adb,
+      cause: error,
+    });
     throw error;
   }
 }
@@ -301,6 +374,24 @@ function resolvePersistentSessionCaptureOptions(
   };
 }
 
+/**
+ * What a start gets out of the helper-command budget it was built with: half of it, so a helper that
+ * announces itself later than a session capture takes is not pushed off the persistent path by a
+ * capture-sized guess, while the one-shot transport that answers a failed start keeps the other half.
+ * Never less than one session command is worth, never more than the budget. Production builds that
+ * budget from `ANDROID_SNAPSHOT_HELPER_COMMAND_TIMEOUT_MS` (30 s today, so 15 s here) rather than
+ * from the CLI's `--timeout`, whose deadline reaches this wait as an abort instead.
+ */
+export function resolveAndroidSnapshotHelperStartBudgetMs(commandTimeoutMs: number): number {
+  return Math.min(
+    commandTimeoutMs,
+    Math.max(
+      Math.floor(commandTimeoutMs / 2),
+      SESSION_CAPTURE_TIMEOUT_MS + SESSION_REQUEST_OVERHEAD_MS,
+    ),
+  );
+}
+
 function isAndroidSnapshotHelperSessionEnabled(): boolean {
   const value = requireAndroidAdbHost().environment.AGENT_DEVICE_ANDROID_SNAPSHOT_HELPER_SESSION;
   return value === undefined || !/^(0|false|no|off)$/i.test(value);
@@ -335,7 +426,7 @@ export async function stopAndroidSnapshotHelperSession(
   // exit status adb forwarded from the device from one adb invented for a closed connection.
   // Anything less is not evidence, and the device-side stop runs.
   const deviceExitObserved = graceful.acknowledged && graceful.exited;
-  const runtimeReleaseConfirmed =
+  const releaseProvenByQuit =
     deviceExitObserved &&
     (await androidAdbForwardsDeviceExitStatus({
       adb: session.adb,
@@ -362,9 +453,18 @@ export async function stopAndroidSnapshotHelperSession(
       port: session.port,
       packageName: session.helper.packageName,
       timeoutMs: cleanupTimeoutMs,
-      forceStopRuntime: options.resetRuntime === true || !runtimeReleaseConfirmed,
+      forceStopRuntime: options.resetRuntime === true || !releaseProvenByQuit,
     }),
   ]);
+  // Teardown never decides what the command reports: what the device said about ownership is
+  // recorded for the next acquire, and a command that already answered stays answered.
+  const release = await recordAndroidSnapshotHelperRelease({
+    deviceKey,
+    packageName: session.helper.packageName,
+    adb: session.adb,
+    cause: options.cause,
+    ...(releaseProvenByQuit ? { release: 'released' as const } : {}),
+  });
   emitDiagnostic({
     phase: 'android_snapshot_helper_session_stop',
     data: {
@@ -373,24 +473,15 @@ export async function stopAndroidSnapshotHelperSession(
       capturedCount: session.capturedCount,
       lifetimeMs: Date.now() - session.startedAtMs,
       quitAcknowledged: graceful.acknowledged,
-      // With the exit observed but the release unconfirmed, the transport is what failed to prove it.
+      // With the exit observed but the release unproven, the transport is what failed to prove it.
       quitExitObserved: deviceExitObserved,
-      runtimeReleaseConfirmed,
+      releaseProvenByQuit,
+      release,
       forceKilled: !hostProcessEnded && processStopped,
       forced: force || options.signal?.aborted === true,
-      runtimeForceStopped: cleanup.runtimeForceStopped,
       externalCleanupTimedOut: cleanup.timedOut,
     },
   });
-  // Either the release was proven or the device-side stop confirmed it. An unproven quit whose
-  // stop also failed leaves ownership unknown, which is what quarantine exists to report.
-  if (!runtimeReleaseConfirmed && !cleanup.runtimeForceStopped) {
-    quarantineAndroidSnapshotHelperRetirement({
-      deviceKey,
-      packageName: session.helper.packageName,
-      cause: options.cause,
-    });
-  }
   return true;
 }
 
@@ -435,16 +526,18 @@ export async function stopAndroidSnapshotHelperSessionForDevice(
 }
 
 export async function resetAndroidSnapshotHelperSessions(): Promise<void> {
-  const retirements = await Promise.allSettled(
-    [...sessions.keys()].map((deviceKey) => stopAndroidSnapshotHelperSession(deviceKey)),
-  );
-  disabledSessionIdentities.clear();
-  const failures = retirements
-    .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
-    .map((result) => result.reason);
-  if (failures.length > 0) {
-    throw new AggregateError(failures, 'Failed to retire every Android snapshot helper session');
+  try {
+    await Promise.allSettled(
+      [...sessions.keys()].map(async (deviceKey) => {
+        await stopAndroidSnapshotHelperSession(deviceKey);
+      }),
+    );
+  } finally {
+    // One teardown that throws must not leave the next caller believing a session, a pending
+    // retirement, or a failed start is still standing.
+    sessions.clear();
+    failedStarts.clear();
+    resetAndroidSnapshotHelperRetirements();
+    resetAndroidAdbShellProtocolProbes();
   }
-  resetAndroidSnapshotHelperRetirements();
-  resetAndroidAdbShellProtocolProbes();
 }

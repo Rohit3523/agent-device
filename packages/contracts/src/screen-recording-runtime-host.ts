@@ -240,6 +240,13 @@ export type WebScreenRecordingHost = Readonly<{
 
 /** Closed post-processing authority for stable/playable validation, telemetry, and overlays. */
 export type ScreenRecordingFinalizer = Readonly<{
+  /**
+   * The container sniff a stop runs on its collected copy before it checkpoints that copy (ADR 0024
+   * 2.3): `ftyp` and `moov` for MP4, the EBML segment for WebM. It spawns no validator; `complete`
+   * still gives the export the full playability verdict. A file that fails is refused with the same
+   * retriable unplayable error `complete` uses.
+   */
+  sniff(input: Readonly<{ outputPath: string }>): Promise<void>;
   complete(
     input: Readonly<{
       outputPath: string;
@@ -255,6 +262,18 @@ export type ScreenRecordingFinalizer = Readonly<{
 /** Destructive output preparation occurs only after package-owned semantic validation. */
 export type ScreenRecordingOutputHost = Readonly<{
   prepare(outputPath: string): Promise<void>;
+  /**
+   * Copies one recording file to another host path, replacing whatever sits at `to` (ADR 0024 2.3).
+   * A stop collects the recorder's file this way and writes the export from the collected copy, so
+   * the recorder keeps its own file until an export exists. A missing source is an error rather than
+   * a step to skip: a recording that is not there is something the stop has to say out loud.
+   */
+  copy(input: Readonly<{ from: string; to: string }>): Promise<void>;
+  /**
+   * Removes one recording file and answers whether it is gone. It never throws: only the host can see
+   * the path, so a refused removal is reported as `present` for the caller to disclose or ignore.
+   */
+  remove(filePath: string): Promise<'removed' | 'present'>;
 }>;
 
 /** Focused host authorities consumed only by package-owned screen-recording mechanics. */

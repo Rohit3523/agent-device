@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, test, vi } from 'vitest';
 import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 vi.mock('@agent-device/host-kit/command', async (importOriginal) => {
@@ -114,31 +113,29 @@ afterEach(async () => {
 
 test('screenshotAndroid waits for transient UI to settle before capture', async () => {
   const events: string[] = [];
-  const outPath = path.join(os.tmpdir(), `agent-device-android-screenshot-${Date.now()}.png`);
+  await withTempScreenshot('screenshot-settle-', async (outPath) => {
+    mockScreenshotEvents(events);
+    await screenshotAndroid(device, outPath);
 
-  mockScreenshotEvents(events);
-
-  await screenshotAndroid(device, outPath);
-
-  const relevantEvents = events.filter((event, index) => {
-    if (event !== 'enable') {
-      return true;
-    }
-    return index === 0;
+    const relevantEvents = events.filter((event, index) => {
+      if (event !== 'enable') {
+        return true;
+      }
+      return index === 0;
+    });
+    assert.deepEqual(relevantEvents, ['enable', 'settle:1000', 'capture', 'disable']);
   });
-  assert.deepEqual(relevantEvents, ['enable', 'settle:1000', 'capture', 'disable']);
 });
 
 test('screenshotAndroid skips stabilization when requested', async () => {
   const events: string[] = [];
-  const outPath = path.join(os.tmpdir(), `agent-device-android-screenshot-${Date.now()}.png`);
+  await withTempScreenshot('screenshot-stabilize-', async (outPath) => {
+    mockScreenshotEvents(events);
+    await screenshotAndroid(device, outPath, { stabilize: false });
 
-  mockScreenshotEvents(events);
-
-  await screenshotAndroid(device, outPath, { stabilize: false });
-
-  assert.deepEqual(events, ['capture']);
-  assert.equal(mockSleep.mock.calls.length, 0);
+    assert.deepEqual(events, ['capture']);
+    assert.equal(mockSleep.mock.calls.length, 0);
+  });
 });
 
 test('screenshotAndroid writes a valid PNG when output is clean', async () => {
@@ -664,29 +661,29 @@ test('snapshotAndroid falls back to one-shot capture after retiring a failed ses
   );
 });
 
-test('snapshotAndroid does not start one-shot capture when session retirement is unconfirmed', async () => {
+test('snapshotAndroid answers from one-shot capture when the session stop could not run', async () => {
   const adbCalls: string[][] = [];
   const oneShotAttempts: string[][] = [];
+  // The stop call failing says the transport is unhealthy, not that UiAutomation is still held.
+  // ADR 0002 keeps the one-shot transport as the fallback for a session failure either way.
   const provider = createPersistentSnapshotHelperProvider({
     calls: adbCalls,
     spawnArgs: [],
     processes: [],
     sessionResponseMode: 'malformed',
-    stalledSessionCleanup: true,
+    runtimeStopFailure: true,
     oneShotAttempts,
-    oneShotXml: '<hierarchy><node text="must not run" bounds="[0,0][10,10]" /></hierarchy>',
+    oneShotXml: '<hierarchy><node text="one-shot fallback" bounds="[0,0][10,10]" /></hierarchy>',
   });
 
-  await assert.rejects(
-    snapshotAndroid(device, {
-      helperAdb: provider,
-      helperArtifact,
-      helperSessionScope: 'daemon-session',
-    }),
-    /could not confirm release of device automation ownership/,
-  );
+  const result = await snapshotAndroid(device, {
+    helperAdb: provider,
+    helperArtifact,
+    helperSessionScope: 'daemon-session',
+  });
 
-  assert.equal(oneShotAttempts.length, 0);
+  assert.equal(result.nodes[0]?.label, 'one-shot fallback');
+  assert.equal(oneShotAttempts.length, 1);
 });
 
 test('snapshotAndroid fails closed when the helper fails', async () => {

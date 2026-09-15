@@ -1,4 +1,5 @@
 import { readSnapshotDiagnosticsSummary } from '@agent-device/contracts/capture';
+import { readResponseWarnings } from '@agent-device/kernel/success-text';
 import type { DaemonResponse } from '../../daemon-request.ts';
 import { isReplayInfrastructureFailure } from './session-test-infrastructure.ts';
 import type { ReplayTestAttemptFailed, ReplayTestAttemptOutcome } from '@agent-device/replay-test';
@@ -18,6 +19,7 @@ export function toReplayTestAttemptOutcome(response: DaemonResponse): ReplayTest
       status: 'failed',
       error: response.error,
       artifactPaths: readArtifactPaths(response.error.details?.artifactPaths),
+      warnings: readResponseWarnings(response.error.details),
       infrastructure: isReplayInfrastructureFailure(response),
       ...snapshotDiagnostics(response.error.details?.snapshotDiagnostics),
     };
@@ -27,7 +29,7 @@ export function toReplayTestAttemptOutcome(response: DaemonResponse): ReplayTest
     status: 'passed',
     replayed: typeof data?.replayed === 'number' ? data.replayed : 0,
     healed: typeof data?.healed === 'number' ? data.healed : 0,
-    warnings: readStringArray(data?.warnings),
+    warnings: readResponseWarnings(data),
     artifactPaths: readArtifactPaths(data?.artifactPaths),
     ...snapshotDiagnostics(data?.snapshotDiagnostics),
   };

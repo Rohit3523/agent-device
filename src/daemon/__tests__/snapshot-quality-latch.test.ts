@@ -1,4 +1,3 @@
-import os from 'node:os';
 import path from 'node:path';
 import { expect, test, vi } from 'vitest';
 import type { SnapshotQualityVerdict } from '@agent-device/kernel/snapshot';
@@ -17,6 +16,7 @@ import { SessionStore } from '../session-store.ts';
 import type { SessionState } from '../session-state.ts';
 import { legacyDispatchCapture } from './legacy-snapshot-capture-fixture.ts';
 import { snapshotRuntimeFixture } from './snapshot-runtime-fixture.ts';
+import { mkdtempForTestSync } from '../../__tests__/test-utils/tmp-dir.ts';
 
 vi.mock('../snapshot-interactor-capture.ts', async () => {
   const fixture = await import('./legacy-snapshot-capture-fixture.ts');
@@ -165,8 +165,28 @@ test('sessionless responses pass through unchanged', () => {
   ).toBe(data);
 });
 
+test('the recovered warning rides the shared warnings channel and foreign entries are dropped', () => {
+  const session = makeIosSession('default', { appBundleId: 'com.example.app' });
+
+  const out = applyRecoveredWarningLatch({
+    session,
+    data: { warnings: ['a note', 42, { nested: true }] },
+    verdict: deferredVerdict(),
+    internalObservation: false,
+  });
+
+  const warnings = out.warnings as string[];
+  expect(warnings).toHaveLength(2);
+  expect(typeof warnings[0]).toBe('string');
+  expect(warnings[0]).not.toBe('a note');
+  expect(warnings[1]).toBe('a note');
+});
+
 function scenario() {
-  const root = path.join(os.tmpdir(), `agent-device-quality-latch-${crypto.randomUUID()}`);
+  const root = path.join(
+    mkdtempForTestSync('agent-device-quality-latch'),
+    `agent-device-quality-latch-${crypto.randomUUID()}`,
+  );
   const sessionStore = new SessionStore(path.join(root, 'sessions'));
   const sessionName = 'default';
   const session = makeIosSession(sessionName, { appBundleId: 'com.example.app' });

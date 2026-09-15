@@ -4,6 +4,7 @@ import { AppError } from '@agent-device/kernel/errors';
 import { RECORDING_OUTPUT_UNPLAYABLE_REASON } from '@agent-device/contracts/screen-recording-runtime';
 import type { AppleScreenRecordingRunnerRequest } from '@agent-device/contracts/screen-recording-runtime-host';
 import type { DeviceInfo } from '@agent-device/kernel/device';
+import { recordingFileStore } from '@agent-device/capture-kit/recording-artifact-fixtures';
 import { localRuntimeOwner } from '@agent-device/contracts/platform-runtime';
 import { createAppleScreenRecordingOperations, appleScreenRecordingFacts } from './runtime.ts';
 import {
@@ -12,6 +13,7 @@ import {
   coreDeviceRunnerStart,
   processIdentity,
   recordingInput as input,
+  recordingOutputPath,
   runnerOwnership,
   simulator,
 } from './runtime.fixtures.ts';
@@ -82,6 +84,50 @@ test('declares the exact XCTest backend failure before exposing operations', () 
   });
 });
 
+test('a runner recording that wrote on the device reports that path as owed a retirement', async () => {
+  const operations = createAppleScreenRecordingOperations({
+    host: appleHost(),
+    device: coreDevice,
+    owner: localRuntimeOwner('apple'),
+    signal: new AbortController().signal,
+  });
+  const handle = (await operations.screenRecordingStart(input())).pendingHandle.transfer();
+
+  await expect(handle.finish()).resolves.toMatchObject({
+    status: 'completed',
+    result: {
+      stopObservation: { recorder: 'confirmed' },
+      // The stop RPC was acknowledged and the file was retrieved off the device, so nothing removes
+      // it here — retiring it is owed, and saying so is what lets a later step do it (ADR 0024 2.3).
+      nativePathDisposition: 'retirable',
+    },
+  });
+});
+
+test('an invalidated runner recording still names its device-side path as owed', async () => {
+  const operations = createAppleScreenRecordingOperations({
+    host: appleHost(),
+    device: coreDevice,
+    owner: localRuntimeOwner('apple'),
+    signal: new AbortController().signal,
+  });
+  const handle = (
+    await operations.screenRecordingStart(input({ showTouches: true }))
+  ).pendingHandle.transfer();
+  handle.invalidate('runner restarted');
+
+  await expect(handle.finish()).resolves.toMatchObject({
+    status: 'completed',
+    result: {
+      // Losing the session that held the recorder says nothing about who stopped writing, while the
+      // file the runner left on the device is still there to be retired.
+      stopObservation: { recorder: 'lost', why: 'owner-session-lost' },
+      nativePathDisposition: 'retirable',
+      overlayWarning: 'overlay unavailable: runner restarted',
+    },
+  });
+});
+
 test('uses simctl on simulators and retains the macOS runner path', async () => {
   const calls: string[] = [];
   const ownedProcesses = { replace: vi.fn(), clear: vi.fn() };
@@ -134,7 +180,7 @@ test('uses simctl on simulators and retains the macOS runner path', async () => 
     });
     const started = await operations.screenRecordingStart({
       sessionId: runtimeDevice.id,
-      outputPath: `/tmp/${runtimeDevice.id}.mp4`,
+      outputPath: recordingOutputPath(`${runtimeDevice.id}.mp4`),
       scope: 'device',
       showTouches: false,
       hideTouchesRequested: false,
@@ -162,6 +208,91 @@ test('uses simctl on simulators and retains the macOS runner path', async () => 
     { ...processIdentity, purpose: 'simctl-screen-recording' },
   ]);
   expect(ownedProcesses.clear).toHaveBeenCalledWith({ kind: 'session', sessionId: 'sim' });
+});
+
+test('a simulator stop exports from a copy and retires the file the recorder owned', async () => {
+  const exportPath = recordingOutputPath('export-only.mp4');
+  const nativePath = exportPath.replace(/\.mp4$/, '.native.mp4');
+  const collectedPath = exportPath.replace(/\.mp4$/, '.collected.mp4');
+  const files = recordingFileStore();
+  const saw: string[] = [];
+  const operations = createAppleScreenRecordingOperations({
+    host: appleHost({
+      files,
+      apple: {
+        startSimulator: async (_device, recorderPath) => {
+          saw.push(`record:${recorderPath}`);
+          return {
+            markers: [processIdentity],
+            wait: Promise.resolve({ stdout: '', stderr: '', exitCode: 0 }),
+            terminate: async () => {},
+          };
+        },
+      },
+      sniff: async ({ outputPath }) => {
+        saw.push(`sniff:${outputPath}`);
+      },
+      complete: async ({ outputPath }) => {
+        saw.push(`finalize:${outputPath}`);
+        return {};
+      },
+    }),
+    device: simulator,
+    owner: localRuntimeOwner('apple'),
+    signal: new AbortController().signal,
+  });
+
+  const started = await operations.screenRecordingStart({
+    ...input(),
+    outputPath: exportPath,
+  });
+  const handle = started.pendingHandle.transfer();
+  expect(saw).toEqual([`record:${nativePath}`]);
+  // The recorder owns its path while it writes, so the caller's path is not theirs to see yet.
+  expect(files.exists(exportPath)).toBe(false);
+
+  const outcome = await handle.finish();
+
+  expect(outcome.status).toBe('completed');
+  if (outcome.status !== 'completed') return;
+  expect(outcome.result).toMatchObject({ nativePathDisposition: 'retired' });
+  expect(saw).toEqual([`record:${nativePath}`, `sniff:${collectedPath}`, `finalize:${exportPath}`]);
+  expect(files.exists(exportPath)).toBe(true);
+  expect(files.exists(nativePath)).toBe(false);
+  expect(files.exists(collectedPath)).toBe(false);
+});
+
+test('a simulator export the finalizer refuses leaves the caller path empty and the copy for the retry', async () => {
+  const exportPath = recordingOutputPath('refused.mp4');
+  const nativePath = exportPath.replace(/\.mp4$/, '.native.mp4');
+  const collectedPath = exportPath.replace(/\.mp4$/, '.collected.mp4');
+  const files = recordingFileStore();
+  const operations = createAppleScreenRecordingOperations({
+    host: appleHost({
+      files,
+      apple: {
+        startSimulator: async () => ({
+          markers: [processIdentity],
+          wait: Promise.resolve({ stdout: '', stderr: '', exitCode: 0 }),
+          terminate: async () => {},
+        }),
+      },
+      complete: async () => {
+        throw new Error('recording was not finalized into a playable video');
+      },
+    }),
+    device: simulator,
+    owner: localRuntimeOwner('apple'),
+    signal: new AbortController().signal,
+  });
+  const started = await operations.screenRecordingStart({ ...input(), outputPath: exportPath });
+
+  await expect(started.pendingHandle.transfer().finish()).rejects.toThrow('playable video');
+
+  // `--out` only ever holds bytes the finalizer accepted; the recorder's file and the copy stay.
+  expect(files.exists(exportPath)).toBe(false);
+  expect(files.exists(collectedPath)).toBe(true);
+  expect(files.exists(nativePath)).toBe(true);
 });
 
 test('simulator cleanup waits for confirmed process exit', async () => {
@@ -220,6 +351,8 @@ test('a simulator recorder that exited early is collected and its exit is disclo
   await expect(started.pendingHandle.transfer().finish()).resolves.toMatchObject({
     status: 'completed',
     result: {
+      // An exited recorder is a fact about the recorder even when its exit explains nothing.
+      stopObservation: { recorder: 'confirmed' },
       warning:
         'simctl recordVideo exited with code 1 before record stop; the video covers only what ' +
         'the recorder wrote before it stopped.',
@@ -423,7 +556,7 @@ test('rejects invalid simulator app scope before output or process acquisition',
   const operations = createAppleScreenRecordingOperations({
     host: appleHost({
       apple: { startSimulator },
-      prepare,
+      outputs: { prepare },
     }),
     device: simulator,
     owner: localRuntimeOwner('apple'),

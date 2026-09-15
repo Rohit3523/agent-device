@@ -108,6 +108,9 @@ export function resolveAndroidSnapshotHelperSessionRequestTimeoutMs(params: {
   );
 }
 
+const SESSION_READY_TIMEOUT_REASON = 'android_snapshot_helper_session_ready_timeout';
+const SESSION_EXITED_BEFORE_READY_REASON = 'android_snapshot_helper_session_exited_before_ready';
+
 export function waitForAndroidSnapshotHelperSessionReady(
   childProcess: AndroidAdbProcess,
   timeoutMs: number,
@@ -121,6 +124,7 @@ export function waitForAndroidSnapshotHelperSessionReady(
         new AppError('COMMAND_FAILED', 'Android snapshot helper session did not become ready', {
           output,
           timeoutMs,
+          reason: SESSION_READY_TIMEOUT_REASON,
         }),
       );
     }, timeoutMs);
@@ -154,6 +158,7 @@ export function waitForAndroidSnapshotHelperSessionReady(
           output,
           exitCode: code,
           signal: exitSignal,
+          reason: SESSION_EXITED_BEFORE_READY_REASON,
         }),
       );
     });

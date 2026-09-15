@@ -36,8 +36,6 @@ import {
   captureAndroidSnapshotWithHelperSession,
   ensureAndroidSnapshotHelper,
   forgetAndroidSnapshotHelperInstall,
-  getAndroidSnapshotHelperSessionDeviceKey,
-  isAndroidSnapshotHelperRetirementUnconfirmedError,
   stopAndroidSnapshotHelperSession,
   type AndroidAdbExecutor,
   type AndroidSnapshotHelperArtifact,
@@ -45,6 +43,10 @@ import {
   type AndroidSnapshotHelperInstallResult,
   type AndroidSnapshotHelperOutput,
 } from './snapshot-helper.ts';
+import {
+  getAndroidSnapshotHelperSessionDeviceKey,
+  isAndroidSnapshotHelperRuntimeOccupiedError,
+} from './snapshot-helper-retirement.ts';
 import { requireAndroidAdbHost } from './adb-host.ts';
 import { parseAndroidSnapshotHelperManifest } from './snapshot-helper-artifact.ts';
 import type { AndroidSnapshotBackendMetadata } from './snapshot-types.ts';
@@ -377,7 +379,7 @@ async function captureAndroidUiHierarchyFromHelper(params: {
     if (sessionCapture) return sessionCapture;
   } catch (error) {
     signal?.throwIfAborted();
-    if (isAndroidSnapshotHelperRetirementUnconfirmedError(error)) {
+    if (isAndroidSnapshotHelperRuntimeOccupiedError(error)) {
       throw error;
     }
     emitDiagnostic({
@@ -478,29 +480,28 @@ async function captureAndroidHelperContentAttempt(params: {
   const content = classifyAndroidHelperContent(helperCapture.xml, helperCapture.metadata, {
     foregroundAppPackage: options.appBundleId,
   });
-  if (content.outcome === 'system-surface-only') {
+  if (content.outcome === 'unusable') {
+    return { outcome: 'unusable', decision: content.decision };
+  }
+  // Only content the helper cannot answer with is worth another call. A tree holding just the
+  // system surface is an answer, and `systemSurfaceOnly` on the capture is where it is recorded:
+  // it travels with the response and becomes the disclosure the caller reads.
+  const systemSurfaceOnly = content.outcome === 'system-surface-only';
+  if (!systemSurfaceOnly && attempt > 0) {
     emitDiagnostic({
-      phase: 'android_snapshot_helper_system_surface',
-      data: { foregroundAppPackage: options.appBundleId },
+      phase: 'android_snapshot_helper_content_recaptured',
+      data: { attempts: attempt + 1, recoveredFromReason: params.previousContentReason },
     });
-    return {
-      outcome: 'captured',
-      capture: {
-        xml: helperCapture.xml,
-        metadata: { ...helperCapture.metadata, systemSurfaceOnly: true },
-      },
-    };
   }
-  if (content.outcome === 'ok') {
-    if (attempt > 0) {
-      emitDiagnostic({
-        phase: 'android_snapshot_helper_content_recaptured',
-        data: { attempts: attempt + 1, recoveredFromReason: params.previousContentReason },
-      });
-    }
-    return { outcome: 'captured', capture: helperCapture };
-  }
-  return { outcome: 'unusable', decision: content.decision };
+  return {
+    outcome: 'captured',
+    capture: {
+      xml: helperCapture.xml,
+      metadata: systemSurfaceOnly
+        ? { ...helperCapture.metadata, systemSurfaceOnly: true }
+        : helperCapture.metadata,
+    },
+  };
 }
 
 async function delayBeforeContentRecapture(signal?: AbortSignal): Promise<void> {

@@ -97,7 +97,9 @@ extension RunnerTests {
     var outcome = RunnerInteractionOutcome.performed
     let timing = measureGesture {
       if idleTimeout {
-        withTemporaryScrollIdleTimeoutIfSupported(app) { outcome = action() }
+        withBoundedInteractionIdleTimeoutIfSupported(app, waits: .bothSkipped) {
+          outcome = action()
+        }
       } else {
         outcome = action()
       }
@@ -685,16 +687,16 @@ extension RunnerTests {
       if case .busy = self.currentMainThreadBusyState() {
         box.wasBusyBeforeRelease = true
       }
-      box.hadAbandonedProbeBeforeRelease = self.hasAbandonedTreeCapture()
+      box.hadAbandonedProbeBeforeRelease = self.hasAbandonedMainThreadWork()
 
       // The XCTest main thread is blocked inside the injected probe, so this verifier owns the
       // ordered release after recording the command result and abandoned-work state above.
       probeReleaseGate.signal()
       let deadline = Date().addingTimeInterval(5)
-      while self.hasAbandonedTreeCapture(), Date() < deadline {
+      while self.hasAbandonedMainThreadWork(), Date() < deadline {
         self.sleepFor(0.002)
       }
-      box.drained = !self.hasAbandonedTreeCapture()
+      box.drained = !self.hasAbandonedMainThreadWork()
       verificationFinished.fulfill()
     }
 
@@ -709,7 +711,7 @@ extension RunnerTests {
     guard case .idle = currentMainThreadBusyState() else {
       return XCTFail("expected the runner to become idle after the routing probe drained")
     }
-    XCTAssertFalse(hasAbandonedTreeCapture())
+    XCTAssertFalse(hasAbandonedMainThreadWork())
   }
 
   func testSkipAppActivationPreflightRejectsSelectorAndMixedSequenceGestures() throws {
@@ -825,91 +827,10 @@ extension RunnerTests {
     XCTAssertTrue(response.error?.hint?.contains("runner session will be restarted") == true)
   }
 
-  func testRunMainThreadWorkExecutesOffMainCallerOnMainThread() {
-    final class ResultBox {
-      var observedMainThread: Bool?
-      var error: Error?
-    }
-    let box = ResultBox()
-    let finished = expectation(description: "off-main caller finished")
-
-    DispatchQueue(label: "agent-device.runner.tests.off-main").async {
-      do {
-        box.observedMainThread = try self.runMainThreadWork(
-          timeout: 1,
-          timeoutError: self.mainThreadExecutionTimeoutError
-        ) {
-          Thread.isMainThread
-        }
-      } catch {
-        box.error = error
-      }
-      finished.fulfill()
-    }
-
-    wait(for: [finished], timeout: 2)
-    XCTAssertNil(box.error)
-    XCTAssertEqual(box.observedMainThread, true)
-  }
-
-  func testRunMainThreadWorkTimeoutMarksAbandonedUntilDrained() {
-    final class ResultBox {
-      var error: Error?
-      var abandonedCount: Int?
-      var abandonedSinceSet: Bool?
-      var drainedCount: Int?
-      var drainedSinceCleared: Bool?
-    }
-    let box = ResultBox()
-    let releaseWork = DispatchSemaphore(value: 0)
-    let observedAbandoned = DispatchSemaphore(value: 0)
-    let finished = expectation(description: "off-main caller timed out")
-    let drained = expectation(description: "abandoned main work drained")
-
-    DispatchQueue(label: "agent-device.runner.tests.timeout").async {
-      do {
-        _ = try self.runMainThreadWork(
-          timeout: 0,
-          timeoutError: self.mainThreadExecutionTimeoutError,
-          onAbandoned: {
-            box.abandonedCount = self.abandonedMainThreadWorkCount
-            box.abandonedSinceSet = self.abandonedMainThreadWorkSince != nil
-            observedAbandoned.signal()
-          },
-          onDrained: {
-            self.mainThreadWorkLock.lock()
-            box.drainedCount = self.abandonedMainThreadWorkCount
-            box.drainedSinceCleared = self.abandonedMainThreadWorkSince == nil
-            self.mainThreadWorkLock.unlock()
-            drained.fulfill()
-          }
-        ) {
-          _ = releaseWork.wait(timeout: .now() + 1)
-          return true
-        }
-      } catch {
-        box.error = error
-      }
-      finished.fulfill()
-    }
-
-    DispatchQueue(label: "agent-device.runner.tests.release-timeout").async {
-      _ = observedAbandoned.wait(timeout: .now() + 1)
-      releaseWork.signal()
-    }
-
-    wait(for: [finished, drained], timeout: 2)
-    XCTAssertEqual((box.error as NSError?)?.code, RunnerErrorCode.mainThreadExecutionTimedOut)
-    XCTAssertEqual(box.abandonedCount, 1)
-    XCTAssertEqual(box.abandonedSinceSet, true)
-    XCTAssertEqual(box.drainedCount, 0)
-    XCTAssertEqual(box.drainedSinceCleared, true)
-  }
-
-  func testPostSnapshotDelayMarkDoesNotQueueBehindAbandonedTreeCapture() {
-    abandonedTreeCaptureCount = 1
+  func testPostSnapshotDelayMarkDoesNotQueueBehindAbandonedMainThreadWork() {
+    abandonedMainThreadWorkCount = 1
     defer {
-      abandonedTreeCaptureCount = 0
+      abandonedMainThreadWorkCount = 0
       needsPostSnapshotInteractionDelay = false
     }
 
@@ -923,7 +844,65 @@ extension RunnerTests {
     mainThreadWorkLock.lock()
     let abandonedWorkCount = abandonedMainThreadWorkCount
     mainThreadWorkLock.unlock()
-    XCTAssertEqual(abandonedWorkCount, 0)
+    XCTAssertEqual(abandonedWorkCount, 1, "the skipped mark must not add an abandoned unit")
+    XCTAssertFalse(needsPostSnapshotInteractionDelay)
+  }
+
+  func testSnapshotFailureInvalidationQueuesBehindAbandonedMainThreadWorkWithoutWaiting() {
+    currentBundleId = "com.example.stale-target"
+    defer { currentBundleId = nil }
+
+    final class ResultBox {
+      var elapsed: TimeInterval?
+      var bundleStillCachedWhileBlocked: Bool?
+      var abandonedWhileBlocked: Int?
+    }
+    let box = ResultBox()
+    let mainBlocked = DispatchSemaphore(value: 0)
+    let releaseMain = DispatchSemaphore(value: 0)
+    let finished = expectation(description: "invalidation returned while main was blocked")
+
+    DispatchQueue(label: "agent-device.runner.tests.snapshot-invalidation").async {
+      _ = try? self.runMainThreadWork(
+        "command_execution",
+        timeout: 0,
+        timeoutError: self.mainThreadExecutionTimeoutError
+      ) {
+        mainBlocked.signal()
+        _ = releaseMain.wait(timeout: .now() + 5)
+        return true
+      }
+      _ = mainBlocked.wait(timeout: .now() + 2)
+      let startedAt = Date()
+      self.invalidateCachedTargetAfterSnapshotFailure()
+      box.elapsed = Date().timeIntervalSince(startedAt)
+      box.bundleStillCachedWhileBlocked = self.currentBundleId != nil
+      self.mainThreadWorkLock.lock()
+      box.abandonedWhileBlocked = self.abandonedMainThreadWorkCount
+      self.mainThreadWorkLock.unlock()
+      releaseMain.signal()
+      finished.fulfill()
+    }
+
+    wait(for: [finished], timeout: 8)
+    let drainDeadline = Date().addingTimeInterval(2)
+    while hasAbandonedMainThreadWork() || currentBundleId != nil, Date() < drainDeadline {
+      sleepFor(0.005)
+    }
+
+    XCTAssertLessThan(
+      box.elapsed ?? .infinity,
+      0.5,
+      "the failed capture must not wait behind abandoned main-thread work"
+    )
+    XCTAssertEqual(
+      box.bundleStillCachedWhileBlocked,
+      true,
+      "the drop must queue behind the blocked main thread, not run early"
+    )
+    XCTAssertEqual(box.abandonedWhileBlocked, 1, "the deferred drop must not add an abandoned unit")
+    XCTAssertFalse(hasAbandonedMainThreadWork())
+    XCTAssertNil(currentBundleId, "the drop must run once the main thread frees")
   }
 #endif
 
@@ -977,13 +956,6 @@ extension RunnerTests {
     )
   }
 
-  /// Tracks one main-queue dispatch so the watchdog and the dispatched block can agree —
-  /// under `mainThreadWorkLock` — on exactly one of: finished in time, or abandoned.
-  private final class MainThreadWorkState {
-    var finished = false
-    var abandoned = false
-  }
-
   struct ActiveCommandContext {
     let app: XCUIApplication
     /// Set when `app` is a system surface served in place over the still-bound session app (#2438).
@@ -993,31 +965,6 @@ extension RunnerTests {
   enum ActiveCommandPreparation {
     case response(Response)
     case context(ActiveCommandContext)
-  }
-
-  enum MainThreadBusyState {
-    case idle
-    case busy(abandonedForSeconds: TimeInterval)
-    case wedged(abandonedForSeconds: TimeInterval)
-
-    /// Whether the main thread is occupied by watchdog-abandoned work, for the occupancy stamp that
-    /// every successful response carries. Wedged is still occupied: it only differs in that a
-    /// restart, not waiting, is the cure.
-    var reportsMainThreadBusy: Bool {
-      if case .idle = self { return false }
-      return true
-    }
-  }
-
-  func currentMainThreadBusyState() -> MainThreadBusyState {
-    mainThreadWorkLock.lock()
-    defer { mainThreadWorkLock.unlock() }
-    guard abandonedMainThreadWorkCount > 0 else { return .idle }
-    let abandonedFor = abandonedMainThreadWorkSince.map { Date().timeIntervalSince($0) } ?? 0
-    if abandonedFor > mainThreadWedgeThreshold {
-      return .wedged(abandonedForSeconds: abandonedFor)
-    }
-    return .busy(abandonedForSeconds: abandonedFor)
   }
 
   private func runnerBusyResponse(command: Command, abandonedForSeconds: TimeInterval) -> Response {
@@ -1100,6 +1047,7 @@ extension RunnerTests {
     }
     if command.command == .alert, let deadline = alertDeadline {
       return try runMainThreadWork(
+        "command_execution",
         timeout: max(0.001, deadline.timeIntervalSinceNow),
         timeoutError: mainThreadExecutionTimeoutError
       ) {
@@ -1111,82 +1059,12 @@ extension RunnerTests {
       }
     }
     return try runMainThreadWork(
+      "command_execution",
       timeout: mainThreadExecutionTimeout,
       timeoutError: mainThreadExecutionTimeoutError
     ) {
       try self.executeOnMainSafely(command: command, routeToSpringboard: routeToSpringboard)
     }
-  }
-
-  func runMainThreadWork<T>(
-    timeout: TimeInterval,
-    timeoutError: @escaping () -> Error,
-    onAbandoned: (() -> Void)? = nil,
-    onDrained: (() -> Void)? = nil,
-    _ work: @escaping () throws -> T
-  ) throws -> T {
-    if Thread.isMainThread {
-      return try work()
-    }
-    var result: Result<T, Error>?
-    let semaphore = DispatchSemaphore(value: 0)
-    let workState = MainThreadWorkState()
-    DispatchQueue.main.async {
-      do {
-        result = .success(try work())
-      } catch {
-        result = .failure(error)
-      }
-      self.mainThreadWorkLock.lock()
-      if workState.abandoned {
-        self.abandonedMainThreadWorkCount -= 1
-        if self.abandonedMainThreadWorkCount == 0 {
-          self.abandonedMainThreadWorkSince = nil
-          NSLog("AGENT_DEVICE_RUNNER_ABANDONED_WORK_DRAINED")
-        }
-        self.mainThreadWorkLock.unlock()
-        onDrained?()
-      } else {
-        workState.finished = true
-        self.mainThreadWorkLock.unlock()
-      }
-      semaphore.signal()
-    }
-    let waitResult = semaphore.wait(timeout: .now() + timeout)
-    if waitResult == .timedOut {
-      mainThreadWorkLock.lock()
-      let stillRunning = !workState.finished
-      if stillRunning {
-        workState.abandoned = true
-        abandonedMainThreadWorkCount += 1
-        if abandonedMainThreadWorkSince == nil {
-          abandonedMainThreadWorkSince = Date()
-        }
-        onAbandoned?()
-      }
-      mainThreadWorkLock.unlock()
-      throw timeoutError()
-    }
-    switch result {
-    case .success(let value):
-      return value
-    case .failure(let error):
-      throw error
-    case .none:
-      throw NSError(
-        domain: RunnerErrorDomain.general,
-        code: RunnerErrorCode.noResponseFromMainThread,
-        userInfo: [NSLocalizedDescriptionKey: "no response from main thread"]
-      )
-    }
-  }
-
-  private func mainThreadExecutionTimeoutError() -> Error {
-    NSError(
-      domain: RunnerErrorDomain.general,
-      code: RunnerErrorCode.mainThreadExecutionTimedOut,
-      userInfo: [NSLocalizedDescriptionKey: "main thread execution timed out"]
-    )
   }
 
   // MARK: - Command Handling
@@ -1290,6 +1168,7 @@ extension RunnerTests {
     var hasRetried = false
     while true {
       let failureCountBefore = try runMainThreadWork(
+        "recorded_failure_count",
         timeout: mainThreadExecutionTimeout,
         timeoutError: mainThreadExecutionTimeoutError
       ) {
@@ -1298,7 +1177,7 @@ extension RunnerTests {
       let response = try perform()
       // Recovered independently — re-entering main for bookkeeping would queue behind the still-
       // abandoned XCTest query and re-stall the command (#1244), so skip it until that work drains.
-      if hasAbandonedTreeCapture() {
+      if hasAbandonedMainThreadWork() {
         NSLog(
           "AGENT_DEVICE_RUNNER_DISPATCH_RECOVERY_SKIPPED_XCTEST_OCCUPIED command=%@",
           command.command.rawValue
@@ -1306,6 +1185,7 @@ extension RunnerTests {
         return response
       }
       let recordedFailureResponse = try runMainThreadWork(
+        "recorded_failure_count",
         timeout: mainThreadExecutionTimeout,
         timeoutError: mainThreadExecutionTimeoutError
       ) {
@@ -1315,6 +1195,7 @@ extension RunnerTests {
       }
       if let recordedFailureResponse {
         try runMainThreadWork(
+          "target_invalidation",
           timeout: mainThreadExecutionTimeout,
           timeoutError: mainThreadExecutionTimeoutError
         ) {
@@ -1329,6 +1210,7 @@ extension RunnerTests {
         )
         hasRetried = true
         try runMainThreadWork(
+          "target_invalidation",
           timeout: mainThreadExecutionTimeout,
           timeoutError: mainThreadExecutionTimeoutError
         ) {
@@ -1343,6 +1225,7 @@ extension RunnerTests {
 
   private func executeSnapshotDispatchedOnce(command: Command) throws -> Response {
     let preparation = try runMainThreadWork(
+      "command_preparation",
       timeout: mainThreadExecutionTimeout,
       timeoutError: mainThreadExecutionTimeoutError
     ) {
@@ -1417,12 +1300,13 @@ extension RunnerTests {
       needsPostSnapshotInteractionDelay = true
       return
     }
-    guard !hasAbandonedTreeCapture() else {
+    guard !hasAbandonedMainThreadWork() else {
       NSLog("AGENT_DEVICE_RUNNER_POST_SNAPSHOT_DELAY_MARK_SKIPPED_XCTEST_OCCUPIED")
       return
     }
     do {
       try runMainThreadWork(
+        "post_snapshot_delay_mark",
         timeout: 1,
         timeoutError: mainThreadExecutionTimeoutError
       ) {
@@ -1438,8 +1322,18 @@ extension RunnerTests {
       invalidateCachedTarget(reason: "ax_snapshot_failure")
       return
     }
+    // Abandoned work ahead of this hop cannot be cancelled: queue the drop behind it without
+    // waiting, so the failed capture answers now and the next command still finds the target gone.
+    guard !hasAbandonedMainThreadWork() else {
+      NSLog("AGENT_DEVICE_RUNNER_SNAPSHOT_INVALIDATION_DEFERRED_XCTEST_OCCUPIED")
+      DispatchQueue.main.async {
+        self.invalidateCachedTarget(reason: "ax_snapshot_failure")
+      }
+      return
+    }
     do {
       try runMainThreadWork(
+        "target_invalidation",
         timeout: 1,
         timeoutError: mainThreadExecutionTimeoutError
       ) {
@@ -2083,7 +1977,7 @@ extension RunnerTests {
       return Response(ok: true, data: DataPayload(message: "remote pressed"))
     case .type:
       var response: Response?
-      withTemporaryScrollIdleTimeoutIfSupported(activeApp) {
+      withBoundedInteractionIdleTimeoutIfSupported(activeApp, waits: .bothSkipped) {
         response = executeTypeCommand(activeApp: activeApp, command: command)
       }
       return response ?? Response(ok: false, error: ErrorPayload(message: "type produced no response"))
@@ -2095,7 +1989,7 @@ extension RunnerTests {
       // keeps raw measureGesture and only routes the success payload through gestureResponse.
       var executedFrame: DragVisualizationFrame?
       let timing = measureGesture {
-        withTemporaryScrollIdleTimeoutIfSupported(activeApp) {
+        withBoundedInteractionIdleTimeoutIfSupported(activeApp, waits: .bothSkipped) {
           executedFrame = swipe(app: activeApp, direction: direction)
         }
       }

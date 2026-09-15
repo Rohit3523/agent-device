@@ -187,6 +187,16 @@ they run a short XCTest probe instead of the full tree slice so healthy screens 
 repeating the hostile-screen grind. The raw diagnostic plan is exempt — it keeps tree-first error
 propagation.
 
+A third shape followed on the same app class once the plan recovered reliably. The query-sweep
+tier's 19 `allElementsBoundByIndex` reads each fail with `kAXErrorIllegalArgument`, and XCTest
+records every one as a test failure worded `Failed to resolve query: ...`. Any recorded failure the
+runner does not mute ends `testCommand` as soon as the main-thread block that recorded it returns,
+whatever `continueAfterFailure` says, so the runner died after (or during) every hostile snapshot
+and the per-bundle penalty and depth memory died with it. The runner now mutes AX-server rejections
+in both XCTest fetch wordings, and every bounded main-thread dispatch that outlives its slice counts
+as occupying the main thread (the tree XPC and the system-modal probe previously kept a second count
+of their own), so a viewport read that grinds makes the plan skip the sweep instead of queueing it.
+
 ## Recovery conformance and depth hints
 
 The host AX bridge and the XCTest runner's private AX bridge recover rejected deep requests with
@@ -348,10 +358,16 @@ predicate sound. This also makes issue #2438's second bug (a stale tree served c
 teardown) unrepresentable for the delegated-auth flow, because the session never binds to the host.
 
 Captures of a system surface carry a response-level `systemSurface` provenance and the shared
-`IOS_SYSTEM_SURFACE_DISCLOSURE`, so the agent is told the controls belong to a system sheet rather
-than the app. They are also lineaged to the host rather than the app, so their comparison identity
-differs from an app capture's by construction: every consumer that asks "are these two captures the
-same presentation" refuses a cross-surface pair through ordinary key equality, and no comparison
-site carries a surface check of its own. Physical devices always use the runner, so the in-place
-serve applies there without a route change; the Simulator route probe is the only
-Simulator-specific piece.
+`iosSystemSurfaceDisclosure`, worded per host kind, so the agent is told the controls belong to a
+system sheet (web sign-in, Apple Pay) rather than the app. They are also lineaged to the host rather
+than the app, so their comparison identity differs from an app capture's by construction: every
+consumer that asks "are these two captures the same presentation" refuses a cross-surface pair
+through ordinary key equality, and no comparison site carries a surface check of its own. Physical
+devices always use the runner, so the in-place serve applies there without a route change; the
+Simulator route probe is the only Simulator-specific piece.
+
+The Apple Pay host (`com.apple.PassbookUIService`) joined the registry for text entry as much as for
+snapshots. Its billing, shipping, and contact forms hold text fields the session app's tree cannot
+resolve, and a bare `type` addressed to the app process never sees that keyboard. Addressing the
+host in place is what lets the runner's first-responder route type into them; no text-entry branch
+changed for it.

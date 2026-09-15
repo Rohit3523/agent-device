@@ -334,6 +334,38 @@ describe('executeMaestroProgram', () => {
     expect(observer.commandCompleted).toHaveBeenCalledOnce();
   });
 
+  test('failure events carry warnings accumulated before the failing step (#2560)', async () => {
+    const execute = vi.fn(async (request: MaestroRuntimeRequest) => {
+      request.invalidateObservation();
+      throw new AppError('COMMAND_FAILED', 'leaf command failed');
+    });
+    const port = makePort({
+      observe: vi.fn(async ({ generation }) => ({ generation, matched: false })),
+      execute,
+    });
+    const observer = { commandFailed: vi.fn() };
+    const program = parseMaestroProgram(
+      [
+        '---',
+        '- assertVisible:',
+        '    text: Missing assertion',
+        '    optional: true',
+        '- tapOn: Missing target',
+      ].join('\n'),
+    );
+
+    await expect(executeMaestroProgram(program, port, { observer })).rejects.toThrow(
+      'leaf command failed',
+    );
+
+    expect(observer.commandFailed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: expect.objectContaining({ kind: 'tapOn' }),
+        warnings: [expect.stringMatching(/Optional Maestro assertVisible skipped at line 2/)],
+      }),
+    );
+  });
+
   test('observer failure cannot mask nested leaf failure provenance', async () => {
     const execute = vi.fn(async (request: MaestroRuntimeRequest) => {
       request.invalidateObservation();

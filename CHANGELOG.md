@@ -9,6 +9,68 @@
   succeed, and `deny|reset` of a multi-id target returns a comma-joined `permission` list.
   The per-platform servable sets live once in `@agent-device/contracts/settings`
   (`ANDROID_PERMISSION_TARGETS`/`IOS_PERMISSION_TARGETS`).
+- Added (ios): `type` and `fill` work in the Apple Pay sheet on iOS Simulator instead of failing
+  with `TEXT_INPUT_NOT_FOCUSED`. `com.apple.PassbookUIService` is served in place like the web
+  sign-in host (#2438).
+- Changed (ios): Simulator captures also probe for `com.apple.PassbookUIService`. It can keep
+  running after the Apple Pay sheet closes, so a later capture in that app can report
+  `system-surface-host-lingering` while the process stays alive.
+- Changed (ios): the in-place system surface disclosure now names the sheet kind. The web sign-in
+  sentence changed from "A system web sign-in sheet is presented over the app, so this snapshot
+  shows that sheet (hosted out of the app process)." to "This snapshot shows a system web sign-in
+  sheet presented over the app (hosted out of the app process), not app content". The payment host
+  says "the system Apple Pay sheet" instead.
+- Fixed (android): a chunked `record stop` (recordings over 170 s) no longer warns that screenrecord
+  stopped before record stop at the 180 s limit. Rotation always ends every earlier chunk before
+  stop, so the warning now fires only when the last chunk's recorder had already exited.
+- Fixed (android): a snapshot helper that could not prove it released device automation no longer
+  refuses the next command on the strength of an `adb` call. The old code read the outcome of
+  `am force-stop` as the fact it was supposed to measure, and on a loaded host that round trip can
+  outlive its budget while the device is healthy — the shape of #2553 — so the helper process was
+  already gone and the command still failed with `Android automation helper is still holding device
+  automation ownership`. Ownership is read off the device now: the probe asks the device shell for
+  `pidof com.callstack.agentdevice.snapshothelper` and tells it to echo a marker when nothing matched.
+  A process id is `occupied`, the bare marker is `released`, and everything else is `unknown` —
+  `error: closed`, `cannot connect to daemon`, `device offline`, or an adb client killed by a signal
+  before it wrote anything. A release is therefore claimed only by an answer the transport cannot
+  produce about itself, and no exit status is trusted: `adb shell` answers 0 for a device command that
+  failed, and an adb that dies by signal leaves the executor inventing an exit code it never saw. A
+  refusal requires two reads that both name the process, which keeps a helper still inside Android's
+  exit path from costing a command. Scripts that match the failure reason see
+  `android_snapshot_helper_runtime_occupied`, which replaces
+  `android_snapshot_helper_retirement_unconfirmed`.
+- Changed (android): a snapshot helper session that reaches ready settles a release the previous
+  teardown could not prove. `am instrument` force-stops whatever is already instrumenting the helper
+  package, so a session that reported itself ready is the only helper process the device has left,
+  and the unproven release went away with the process that owed it; the next command no longer
+  force-stops the session it has just started because `pidof` happens to be unreadable. A helper start
+  that fails is also retried after a backoff scaled to how long it spent failing (10 s to 60 s)
+  instead of on every command, which had roughly doubled command time on hosts where the helper never
+  starts. And the wait for a started helper to announce itself no longer uses a fixed 10 s: it takes
+  half of the helper-command budget the capture was built with, 15 s today, which is what had been
+  pushing devices slower than a capture off the persistent path. On a host where the helper took 12 s
+  to announce itself, the command used to answer with the one-shot transport and now answers from the
+  session. The CLI's `--timeout` reaches that wait as its deadline aborting it, not as the number.
+
+- Fixed: an iOS snapshot whose XCTest query-sweep tier cannot read the screen no longer ends the
+  runner process. On a live React Native feed (Bluesky Home, images re-rendering) the AX server
+  rejects each of the sweep's 19 element-type queries with `kAXErrorIllegalArgument`, and XCTest
+  records every rejection as a test failure worded `Failed to resolve query: ...`. The runner muted
+  the sibling `Failed to get matching snapshot: ... kAXError...` wording and not this one, and XCTest
+  ends the test case as soon as the main-thread block that recorded an unmuted failure returns, so
+  the runner died right after (or in the middle of) every hostile snapshot and the next command
+  paid a full `xcodebuild` boot. Both wordings are now muted when they carry an AX server code; the
+  timeout and `Application X is not running` variants keep recording. The sweep also no longer runs
+  behind an abandoned read: every bounded main-thread dispatch that outlives its slice now counts
+  as occupying the main thread (one counter, where the tree XPC and the system-modal probe used a
+  second one of their own), so once the tree tier's viewport read grinds past its 1 s slice the plan
+  goes straight to private AX and answers instead of queueing the sweep, the post-snapshot mark, and
+  its own bookkeeping behind seconds of main-thread work. A capture that fails outright while that
+  work is still grinding queues its cached-target drop behind it instead of waiting a second for it,
+  and a fresh process's first capture is no longer penalized by the tree slice timeout, which had
+  bypassed the warmup exemption every other penalty honors. The per-bundle penalty and
+  accepted-depth memory that make later captures of the same screen cheap now survive, because the
+  runner does.
 - Changed (android): the snapshot helper release manifest no longer carries `installArgs`, and the
   helper installs with a fixed `adb install -r` like the IME helper. The array only ever spelled
   `install -r` plus the `-t` that #2603 retired with the `testOnly` flag, so the manifest → flag →
@@ -41,8 +103,51 @@
   is invalidated and prepare retries with the artifact intact. Only a failure that indicts the
   artifact rebuilds it, so a runner that refuses the connection or never answers on any route still
   wipes it and rebuilds, which is what that rule is for.
-
+- Added (record): `record stop` now answers the question a video cannot — whether its recorder
+  actually stopped — beside the export. The result carries `recorder` and `nativePathDisposition` on
+  CLI `--json`, the Node client, and MCP (ADR 0024). Today a stop says `confirmed`, or `lost` with
+  `owner-session-lost` for an Apple recording whose session was invalidated, and names its artifact
+  path `retirable` or `retired`; the wider vocabulary those two fields declare (`unconfirmed`, the
+  identity-mismatch reasons, `pending`) arrives with the later ADR 0024 steps that gain the probes
+  those states describe. Both are disclosures about the recorder and the path it writes to, not
+  failures: the export is served either way, and a stop with nothing to report — an older session's
+  replay, or a backend whose recorder writes the served file itself — omits them. No stop changes
+  outcome in this release; the fields land first so the coordinator can report what it already knows
+  before it starts acting on it.
+- Fixed (record): an Android stop credits the device with retiring its recording only when the
+  device proved the chunks gone. The probe read any failed `test -e` as "not there", so an adb that
+  timed out or a device dropped mid-call turned chunks that were still on the device into
+  `nativePathDisposition: "retired"`, and a reattach that could not question the device at all
+  declared the recording's artifact lost. A probe that never ran now answers uncertain: the path
+  stays `retirable` and the recording stays finishable until the device answers.
+- Changed (record): an iOS Simulator recording no longer has the recorder write the file the caller
+  asked for. `simctl` records to a `<name>.native.<ext>` sibling; `record stop` copies that file to a
+  `<name>.collected.<ext>` sibling, checks that the copy has an MP4 container, writes the caller's
+  `--out` path once from the copy, checks that export is a playable video, and retires the recorder's
+  own file (ADR 0024 2.3). An export the finalizer refuses is removed, so `--out` only ever holds a
+  video that passed that check. The
+  caller's path is never a file a recorder is still writing, and a stop that fails before the export
+  exists leaves it absent with the copy in place — so the next stop resumes from the copy instead of
+  signalling a recorder that already stopped. Both siblings are deleted on success, and a stop that
+  got that far answers `nativePathDisposition: retired` rather than the `retirable` it had to answer
+  while the recorder's file and the served file were one file. A recording whose stop fails and is
+  then abandoned (session close, daemon restart, forced cleanup) keeps its video in these siblings
+  beside `--out`, where the recorder used to leave it at `--out` itself; they are the only copy of that
+  video, so nothing deletes them.
+- Changed (record): an Android recording is no longer pulled onto the path the caller asked for.
+  `record stop` pulls the device's chunks to `<name>.collected.<ext>` siblings, retrying each pull
+  until it plays, then writes the caller's paths from copies of them and drops the collected set once the
+  finalization is journaled (ADR 0024 2.3). Chunk paths the finalizer refused are removed. A stop that dies before the export exists leaves it absent with the pulled set in
+  place, and the next stop resumes from that set instead of signalling a `screenrecord` process that
+  already stopped and pulling a file that may have moved since. The 180s platform-limit disclosure now
+  travels with the recorder's own observation rather than with the export, so a stop that has to be
+  driven again still says it; every disclosure is still in the one `warning`. A retried stop serves
+  every chunk and the `capturedDurationMs` its first attempt finalized, and measures the idle tail
+  against the instant that attempt signalled the recorder rather than the time of the retry. A stop
+  that fails and is then abandoned keeps the pulled set on the host beside `--out`. Chunk paths and
+  `--client-output-path` naming are unchanged.
 - Changed (sessions): the implicit session is now keyed by workspace **and platform**, so one checkout
+
   can drive iOS and Android without inventing a `--session` name for every command (#2580). An
   implicit session was addressed by `cwd:<workspace>:default`, one slot per checkout, and it stayed
   bound to the first device it touched. A repo that tests both platforms — a visual-regression run
@@ -127,6 +232,19 @@
   exactly as before, and a payload the runner did not declare sparse keeps the plain invariant byte for
   byte.
 
+- Fixed: skipped `optional: true` Maestro steps are no longer invisible on the human surface
+  (#2560). The warning a skip leaves now travels with the run whether it later passes or fails:
+  `replay` prints a `Warning:` line after its summary and repeats the run's warnings after a
+  failed run's error, `test` prints a `Warnings:` section after the suite summary naming each
+  test, and a failed test result gained the `warnings` array the passing result already had, so
+  `--json` and JUnit carry the skipped steps of a failing test too.
+- Fixed: an Apple runner presentation refusal now carries the registry identity of the system
+  surface the tree was acquired from as `error.details.systemSurface` (#2560). Previously a
+  selector-backed command failing at the capture boundary under `optional: true` gave nothing
+  naming that boundary — the web sign-in sheet out of `SafariViewService` was invisible in the
+  error, and the miss looked like a selector problem inside the app. The sparse-declared case
+  already names the surface host in its hint via #2572; this covers the provenance everywhere
+  the runner reports one.
 - Changed: a capture that a backend cut at one of its limits now says so in the snapshot's
   warnings, on every platform, instead of only setting `truncated: true` in JSON. The text path
   had no disclosure at all, so an agent read a screen missing its footer, tab bar, or the items

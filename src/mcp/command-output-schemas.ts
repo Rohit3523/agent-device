@@ -3,6 +3,8 @@ import type { CommandResultMap } from '@agent-device/command-registry/command-re
 import { commandSupportsSettleObservation } from '@agent-device/command-registry/registry';
 import { booleanSchema, looseObjectSchema, stringSchema } from '../commands/command-input.ts';
 import { BACK_MODES } from '@agent-device/contracts/back-mode';
+import { NATIVE_PATH_DISPOSITION_VALUES } from '@agent-device/contracts/recording-native-path';
+import { RECORDER_OBSERVATION_VALUES } from '@agent-device/contracts/recording-stop-observation';
 import { DEVICE_ROTATIONS } from '@agent-device/contracts/device';
 import { SESSION_SURFACES } from '@agent-device/contracts/session';
 import { TV_REMOTE_BUTTONS } from '@agent-device/contracts/tv-remote';
@@ -219,7 +221,7 @@ const postActionSurfaceChangeSchema: JsonSchema = objectSchema(
     disclosure: stringSchema('Agent-facing sentence explaining the surface transition.'),
   },
   ['from', 'to', 'disclosure'],
-  'Present when an in-place system surface (web sign-in sheet) was presented over the app, or left it.',
+  'Present when an in-place system surface (web sign-in or Apple Pay sheet) was presented over the app, or left it.',
 );
 
 // InteractionEvidence (packages/contracts/src/interaction.ts) — opt-in `--verify` cheap
@@ -844,6 +846,14 @@ const BASE_COMMAND_OUTPUT_SCHEMAS = {
           activeSessionApp: looseObjectSchema(),
           durationMs: numberSchema(),
           capturedDurationMs: numberSchema(),
+          recorder: enumSchema(
+            RECORDER_OBSERVATION_VALUES,
+            'What the recorder was observed doing when the recording was stopped: confirmed, or lost when the session holding it died. ADR 0024 reserves unconfirmed for the step that gains the probe.',
+          ),
+          nativePathDisposition: enumSchema(
+            NATIVE_PATH_DISPOSITION_VALUES,
+            'What became of the artifact path the recorder writes to: retirable while it still owes a removal, retired once that removal was verified. ADR 0024 reserves pending.',
+          ),
           showTouches: booleanSchema(),
           warning: stringSchema(),
           overlayWarning: stringSchema(),

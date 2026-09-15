@@ -267,8 +267,6 @@ export {
 export {
   ensureAndroidSnapshotHelper,
   forgetAndroidSnapshotHelperInstall,
-  getAndroidSnapshotHelperSessionDeviceKey,
-  isAndroidSnapshotHelperRetirementUnconfirmedError,
   parseAndroidSnapshotHelperManifest as parseAndroidHelperManifest,
   resetAndroidSnapshotHelperSessions,
   stopAndroidSnapshotHelperSession,

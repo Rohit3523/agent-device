@@ -22,8 +22,7 @@ import {
 import { AppError } from '@agent-device/kernel/errors';
 import type { RawSnapshotNode, SnapshotQualityVerdict } from '@agent-device/kernel/snapshot';
 import {
-  isIosSystemSurfaceHost,
-  type IosSystemSurfaceKind,
+  iosSystemSurfaceHost,
   type IosSystemSurfaceProvenance,
 } from '@agent-device/contracts/ios-system-surface';
 
@@ -45,7 +44,7 @@ export function readAppleSnapshotResult(
     nodes: Array.isArray(result.nodes) ? (result.nodes as RawSnapshotNode[]) : undefined,
     truncated: typeof result.truncated === 'boolean' ? result.truncated : undefined,
     quality: readSnapshotQualityVerdict(result.snapshotQuality),
-    qualityPayload: readQualityPayload(result.qualityPayload),
+    qualityPayload: readQualityPayload(result.qualityPayload, systemSurface),
     runnerFatal: result.runnerFatal === true,
     ...(systemSurface ? { systemSurface } : {}),
     message:
@@ -56,14 +55,12 @@ export function readAppleSnapshotResult(
 }
 
 function readSystemSurfaceProvenance(value: unknown): IosSystemSurfaceProvenance | undefined {
-  if (!isRecord(value)) return undefined;
-  const bundleId = value.bundleId;
-  const kind = value.kind;
-  // Trust only a bundle id the shared registry recognizes; an unknown value is dropped rather than
-  // surfaced, mirroring the wire-reader discipline elsewhere in this module.
-  if (typeof bundleId !== 'string' || !isIosSystemSurfaceHost(bundleId)) return undefined;
-  if (typeof kind !== 'string') return undefined;
-  return { bundleId, kind: kind as IosSystemSurfaceKind };
+  if (!isRecord(value) || typeof value.bundleId !== 'string') return undefined;
+  // The shared registry is the authority for both fields: an unknown bundle id is dropped rather
+  // than surfaced, mirroring the wire-reader discipline elsewhere in this module, and the kind is
+  // read from the registry rather than trusted from the wire.
+  const host = iosSystemSurfaceHost(value.bundleId);
+  return host && { bundleId: host.bundleId, kind: host.kind };
 }
 
 export function presentAppleRunnerSnapshot(
@@ -131,6 +128,7 @@ function throwSnapshotPresentationError(error: unknown, result: AppleRunnerSnaps
       error.message,
       {
         ...toIosSnapshotEngineErrorDetails(error),
+        ...(result.systemSurface ? { systemSurface: result.systemSurface } : {}),
         snapshotQuality: {
           state: verdict.state,
           backend: verdict.backend,
@@ -142,7 +140,7 @@ function throwSnapshotPresentationError(error: unknown, result: AppleRunnerSnaps
       error,
     );
   }
-  throwSnapshotEngineError(error);
+  throwSnapshotEngineError(error, result.systemSurface);
 }
 
 function sparseCaptureHint(
@@ -159,7 +157,10 @@ function sparseCaptureHint(
     .join(' ');
 }
 
-function readQualityPayload(value: unknown): IosRunnerQualityPayloadFacts | undefined {
+function readQualityPayload(
+  value: unknown,
+  systemSurface?: IosSystemSurfaceProvenance,
+): IosRunnerQualityPayloadFacts | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value) || !Array.isArray(value.nodes) || typeof value.truncated !== 'boolean') {
     throwSnapshotEngineError(
@@ -167,6 +168,7 @@ function readQualityPayload(value: unknown): IosRunnerQualityPayloadFacts | unde
         'invalid-quality-payload',
         'iOS runner returned an invalid quality payload',
       ),
+      systemSurface,
     );
   }
   if (value.scope !== undefined && value.scope !== null) {
@@ -176,6 +178,7 @@ function readQualityPayload(value: unknown): IosRunnerQualityPayloadFacts | unde
         'iOS runner quality payload must be unscoped',
         { field: 'scope' },
       ),
+      systemSurface,
     );
   }
   return { nodes: value.nodes as RawSnapshotNode[], truncated: value.truncated, scope: null };
@@ -204,12 +207,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function throwSnapshotEngineError(error: unknown): never {
+function throwSnapshotEngineError(
+  error: unknown,
+  systemSurface?: IosSystemSurfaceProvenance,
+): never {
   if (!(error instanceof IosSnapshotEngineError)) throw error;
   throw new AppError(
     'COMMAND_FAILED',
     error.message,
-    toIosSnapshotEngineErrorDetails(error),
+    {
+      ...toIosSnapshotEngineErrorDetails(error),
+      ...(systemSurface ? { systemSurface } : {}),
+    },
     error,
   );
 }

@@ -187,6 +187,7 @@ jobs:
             -only-testing:AgentDeviceRunnerUITests/RunnerTests/testAlertCannotProveAnIdenticalReplacementAndDoesNotActivateIt \
             -only-testing:AgentDeviceRunnerUITests/RunnerTests/testAlertDeadlineBeforeActivationLeavesTheOriginalUntouched \
             -only-testing:AgentDeviceRunnerUITests/RunnerTests/testAlertHittableProbeCompletingAfterDeadlineLeavesTheOriginalUntouched \
+            -only-testing:AgentDeviceRunnerUITests/RunnerTests/testAlertActivationIgnoresAnAppThatNeverSettlesBeforeTheDeadline \
             -only-testing:AgentDeviceRunnerUITests/RunnerTests/testSystemModalProbeSliceSharesAndClampsToPlanDeadline \
             -only-testing:AgentDeviceRunnerUITests/RunnerTests/testDispatchRecoverySkipsBookkeepingWhileXCTestChannelOccupied \
             -only-testing:AgentDeviceRunnerUITests/RunnerTests/testBoundedSystemModalProbeTimeoutRecoversThenReleasesOnDrain \
@@ -247,6 +248,7 @@ jobs:
             -only-testing:AgentDeviceRunnerUITests/RunnerTests/testPartialCustomActionPassIsDisclosedAndCompleteOneIsNot \
             -only-testing:AgentDeviceRunnerUITests/RunnerTests/testActionNamesAreCappedPerElementAndReported \
             -only-testing:AgentDeviceRunnerUITests/RunnerTests/testHungCustomActionReadIsContainedAndRecovers \
+            -only-testing:AgentDeviceRunnerUITests/RunnerTests/testAbandonedTreeCaptureSkipsQuerySweepAndHonorsWarmupExemption \
             -only-testing:AgentDeviceRunnerUITests/RunnerTests/testPrivateAXPinnedRegularDepthReachesAcquisitionAndPresentation 2>&1 | tee /tmp/agent-device-runner-regressions.log
           node --input-type=module -e '
             import { readFileSync } from "node:fs";
