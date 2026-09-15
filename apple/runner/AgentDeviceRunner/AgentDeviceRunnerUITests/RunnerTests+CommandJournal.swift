@@ -183,6 +183,52 @@ extension RunnerTests {
     XCTAssertEqual(stamped.error?.message, "boom")
   }
 
+  func testStampingCurrentMainThreadBusyPreservesPayload() {
+    let stamped = Response(ok: true, data: DataPayload(nodes: [], truncated: false))
+      .stampingCurrentMainThreadBusy(true)
+
+    XCTAssertEqual(stamped.ok, true)
+    XCTAssertEqual(stamped.data?.runnerMainThreadBusy, true)
+  }
+
+  func testStampingCurrentMainThreadBusySkipsErrorResponses() {
+    let response = Response(ok: false, error: ErrorPayload(code: "RUNNER_BUSY", message: "busy"))
+    let stamped = response.stampingCurrentMainThreadBusy(true)
+
+    XCTAssertEqual(stamped.ok, false)
+    XCTAssertNil(stamped.data)
+    XCTAssertEqual(stamped.error?.code, "RUNNER_BUSY")
+  }
+
+  func testMainThreadBusyStateReportsOccupancy() {
+    XCTAssertFalse(MainThreadBusyState.idle.reportsMainThreadBusy)
+    XCTAssertTrue(MainThreadBusyState.busy(abandonedForSeconds: 5).reportsMainThreadBusy)
+    XCTAssertTrue(MainThreadBusyState.wedged(abandonedForSeconds: 200).reportsMainThreadBusy)
+    XCTAssertEqual(
+      Response(ok: true).stampingCurrentMainThreadBusy(false).data?.runnerMainThreadBusy, false)
+  }
+
+  func testCommandFailedResponseTagsMainThreadTimeoutWithTypedCode() {
+    let timeout = NSError(
+      domain: RunnerErrorDomain.general,
+      code: RunnerErrorCode.mainThreadExecutionTimedOut,
+      userInfo: [NSLocalizedDescriptionKey: "main thread execution timed out"]
+    )
+
+    let response = commandFailedResponse(from: timeout)
+
+    XCTAssertEqual(response.ok, false)
+    XCTAssertEqual(response.error?.code, RunnerWireErrorCode.mainThreadTimeout)
+  }
+
+  func testCommandFailedResponseKeepsGenericCodeForOtherErrors() {
+    let other = NSError(domain: "SomeOtherDomain", code: 99, userInfo: nil)
+
+    let response = commandFailedResponse(from: other)
+
+    XCTAssertEqual(response.error?.code, "COMMAND_FAILED")
+  }
+
   func testJournalStoredResponseStaysUnstamped() throws {
     let journal = RunnerCommandJournal()
     let recordStart = runnerJournalCommand("recordStart", id: "record-start-anchor")

@@ -328,11 +328,11 @@ async function finalizeAppleApplicationClose(
 ) {
   if (input.daemonShutdown) {
     await host.appleApplications.dismissCloseAlerts(device, input).catch(() => {});
-  } else if (input.retainRunner) {
-    host.appleApplications.scheduleRunnerIdleStop(device.id);
-    await host.appleApplications.dismissCloseAlerts(device, input).catch(() => {});
   } else {
-    await host.appleApplications.stopRunnerSession(device.id);
+    // The runner module owns the retain-vs-stop decision: it keeps warm reuse for an idle runner and
+    // stops one whose last exchange reported main-thread work still draining, so `close` never pools
+    // a stalled process back out to the next `open` (#2552). Awaited so the lease is released first.
+    await host.appleApplications.releaseRunnerOnClose(device.id, { retain: input.retainRunner });
     await host.appleApplications.dismissCloseAlerts(device, input).catch(() => {});
   }
   const shutdown =

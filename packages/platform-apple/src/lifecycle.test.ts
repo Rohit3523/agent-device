@@ -244,6 +244,56 @@ test('discards a retained physical iOS runner when relaunch fails and preserves 
   expect(notifyRunnerAppRelaunched).not.toHaveBeenCalled();
 });
 
+test.each([true, false])(
+  'close finalization delegates the runner release to the runner module with retain=%s (#2552)',
+  async (retainRunner) => {
+    const signal = new AbortController().signal;
+    const baseHost = platformRuntimeHostFixture();
+    const releaseRunnerOnClose = vi.fn(async () => {});
+    const dismissCloseAlerts = vi.fn(async () => {});
+    const host = {
+      ...baseHost,
+      appleApplications: {
+        ...baseHost.appleApplications,
+        releaseRunnerOnClose,
+        dismissCloseAlerts,
+      },
+    } as unknown as PlatformRuntimeHost;
+    const lifecycle = bindAppleApplicationLifecycle({ host, device, signal });
+
+    await lifecycle.finalizeApplicationClose({ surface: 'app', retainRunner, stateDir: '/tmp' });
+
+    expect(releaseRunnerOnClose).toHaveBeenCalledWith(device.id, { retain: retainRunner });
+    expect(dismissCloseAlerts).toHaveBeenCalled();
+  },
+);
+
+test('daemon-shutdown finalization dismisses alerts and defers the runner release to the gateway (#2552)', async () => {
+  const signal = new AbortController().signal;
+  const baseHost = platformRuntimeHostFixture();
+  const releaseRunnerOnClose = vi.fn(async () => {});
+  const dismissCloseAlerts = vi.fn(async () => {});
+  const host = {
+    ...baseHost,
+    appleApplications: {
+      ...baseHost.appleApplications,
+      releaseRunnerOnClose,
+      dismissCloseAlerts,
+    },
+  } as unknown as PlatformRuntimeHost;
+  const lifecycle = bindAppleApplicationLifecycle({ host, device, signal });
+
+  await lifecycle.finalizeApplicationClose({
+    surface: 'app',
+    retainRunner: true,
+    stateDir: '/tmp',
+    daemonShutdown: true,
+  });
+
+  expect(releaseRunnerOnClose).not.toHaveBeenCalled();
+  expect(dismissCloseAlerts).toHaveBeenCalled();
+});
+
 test('prepare shares one startup budget across the Simulator boot and the runner preparation', async () => {
   vi.useFakeTimers();
   try {

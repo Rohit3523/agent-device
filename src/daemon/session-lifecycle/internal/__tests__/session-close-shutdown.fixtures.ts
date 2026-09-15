@@ -14,6 +14,7 @@ vi.mock('@agent-device/platform-apple/runner/operations', async (importOriginal)
   return {
     ...actual,
     stopIosRunnerSession: vi.fn(async () => {}),
+    releaseIosRunnerOnClose: vi.fn(async () => {}),
   };
 });
 vi.mock('@agent-device/platform-apple/perf', async (importOriginal) => {
@@ -64,7 +65,10 @@ import {
   cleanupAndroidNativePerfSession,
   stopAndroidSnapshotHelperSessionForDevice,
 } from '@agent-device/platform-android/mechanics';
-import { stopIosRunnerSession } from '@agent-device/platform-apple/runner/operations';
+import {
+  releaseIosRunnerOnClose,
+  stopIosRunnerSession,
+} from '@agent-device/platform-apple/runner/operations';
 import { cleanupAppleXctracePerfCapture } from '@agent-device/platform-apple/perf';
 import { WEB_DESKTOP_DEVICE } from '../../../../__tests__/test-utils/device-fixtures.ts';
 import { acquireDeviceClaim } from '../../../device-claims.ts';
@@ -93,6 +97,7 @@ const mockStopAndroidSnapshotHelperSessionForDevice = vi.mocked(
   stopAndroidSnapshotHelperSessionForDevice,
 );
 const mockStopIosRunnerSession = vi.mocked(stopIosRunnerSession);
+const mockReleaseRunnerOnClose = vi.mocked(releaseIosRunnerOnClose);
 
 const teardownSessionResources = (
   request: Parameters<typeof teardownProductionSessionResources>[0],
@@ -253,6 +258,7 @@ export const sessionCloseShutdownFixture = Object.freeze({
   mockShutdownTargetRuntime,
   mockRunCmd,
   mockStopAndroidSnapshotHelperSessionForDevice,
+  mockReleaseRunnerOnClose,
   mockStopIosRunnerSession,
   narrowDeviceBinding,
   noopInvoke,

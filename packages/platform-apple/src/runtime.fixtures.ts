@@ -44,7 +44,7 @@ export function platformRuntimeHostFixture(): PlatformRuntimeHost {
       stopRunnerSession: async () => {},
       hasLiveRunnerSession: async () => false,
       releaseSpeculativeRunner: async () => false,
-      scheduleRunnerIdleStop: () => {},
+      releaseRunnerOnClose: async () => {},
       prepareRunner: async () => ({ runner: {}, connectMs: 0, healthCheckMs: 0 }),
       applyRuntimeHints: async () => {},
       clearRuntimeHints: async () => {},

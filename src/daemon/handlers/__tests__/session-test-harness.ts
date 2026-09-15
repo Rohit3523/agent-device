@@ -48,8 +48,8 @@ vi.mock('@agent-device/platform-apple/runner/operations', async (importOriginal)
     prewarmAppleRunnerCache: vi.fn(),
     prewarmIosRunnerSession: vi.fn(),
     notifyIosRunnerAppRelaunched: vi.fn(async () => {}),
-    scheduleIosRunnerIdleStop: vi.fn(),
     stopIosRunnerSession: vi.fn(async () => {}),
+    releaseIosRunnerOnClose: vi.fn(async () => {}),
   };
 });
 vi.mock('@agent-device/platform-apple/macos', async (importOriginal) => {
@@ -102,8 +102,8 @@ import {
   prewarmAppleRunnerCache,
   prewarmIosRunnerSession,
   notifyIosRunnerAppRelaunched,
-  scheduleIosRunnerIdleStop,
   stopIosRunnerSession,
+  releaseIosRunnerOnClose,
 } from '@agent-device/platform-apple/runner/operations';
 import { runMacOsAlertAction } from '@agent-device/platform-apple/macos';
 import {
@@ -124,7 +124,7 @@ export const mockNotifyIosRunnerAppRelaunched = vi.mocked(notifyIosRunnerAppRela
 export const mockPrewarmAppleRunnerCache = vi.mocked(prewarmAppleRunnerCache);
 export const mockPrepareIosRunner = vi.mocked(prepareIosRunner);
 export const mockStopIosRunner = vi.mocked(stopIosRunnerSession);
-export const mockScheduleIosRunnerIdleStop = vi.mocked(scheduleIosRunnerIdleStop);
+const mockReleaseRunnerOnClose = vi.mocked(releaseIosRunnerOnClose);
 export const mockDismissMacOsAlert = vi.mocked(runMacOsAlertAction);
 export const mockResolveAndroidPackage = vi.mocked(resolveAndroidPackageForOpen);
 export const mockCleanupRetainedMaterializedPaths = vi.mocked(
@@ -162,7 +162,7 @@ beforeEach(() => {
     healthCheckMs: 3,
   });
   mockStopIosRunner.mockReset();
-  mockScheduleIosRunnerIdleStop.mockReset();
+  mockReleaseRunnerOnClose.mockReset();
   mockStopIosRunner.mockResolvedValue(undefined);
   mockDismissMacOsAlert.mockReset();
   mockDismissMacOsAlert.mockResolvedValue({} as any);

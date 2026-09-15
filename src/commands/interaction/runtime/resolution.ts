@@ -65,6 +65,11 @@ import {
   type ReplayTargetGuardDenotation,
 } from '@agent-device/contracts/replay';
 import { resolveActionSelector } from './selector-action-resolution.ts';
+import {
+  assertTapTargetClearOfVisibleKeyboard,
+  describeKeyboardOccludedPointWarning,
+} from './keyboard-occlusion.ts';
+import { interactionVerb } from './interaction-verb.ts';
 
 export type { InteractionTarget, ResolvedInteractionTarget };
 
@@ -192,24 +197,32 @@ export async function resolveInteractionTarget(
   return await resolveSelectorInteractionTarget(runtime, options, options.target, params);
 }
 
-async function tryResolveOutOfBoundsPointWarning(
+/**
+ * The one warning a raw-coordinate tap can earn from the last-known tree: the point is outside the
+ * viewport that tree captured, or the keyboard it captured covers the point. Both are disclosures,
+ * not refusals — see `describeKeyboardOccludedPointWarning`.
+ */
+async function resolvePointTargetWarning(
   runtime: AgentDeviceRuntime,
   options: CommandContext,
   target: PointTarget,
 ): Promise<string | undefined> {
-  const sessionName = options.session ?? 'default';
-  const session = await runtime.sessions.get(sessionName);
-  if (!session?.snapshot) return undefined;
-
-  // Create a synthetic rect from the point for viewport lookup
-  const pointRect = { x: target.x, y: target.y, width: 0, height: 0 };
-  const viewport = createSnapshotVisibility(session.snapshot.nodes).resolveViewport(pointRect);
-  if (!viewport) return undefined;
-
+  const session = await runtime.sessions.get(options.session ?? 'default');
+  const nodes = session?.snapshot?.nodes;
+  if (!nodes) return undefined;
   const point = { x: target.x, y: target.y };
-  if (containsPoint(viewport, point.x, point.y)) return undefined;
 
-  return `Coordinates (${point.x}, ${point.y}) are outside the last-known viewport (${viewport.width}x${viewport.height}). The tap will be forwarded anyway; take a fresh snapshot if the screen changed.`;
+  // The point carries no extent, so the zero-area rect only keys the viewport lookup off it.
+  const viewport = createSnapshotVisibility(nodes).resolveViewport({
+    x: point.x,
+    y: point.y,
+    width: 0,
+    height: 0,
+  });
+  if (viewport && !containsPoint(viewport, point.x, point.y)) {
+    return `Coordinates (${point.x}, ${point.y}) are outside the last-known viewport (${viewport.width}x${viewport.height}). The tap will be forwarded anyway; take a fresh snapshot if the screen changed.`;
+  }
+  return describeKeyboardOccludedPointWarning({ nodes, point, viewport });
 }
 
 async function resolvePointInteractionTarget(
@@ -218,7 +231,7 @@ async function resolvePointInteractionTarget(
   target: PointTarget,
   params: ResolveInteractionTargetParams,
 ): Promise<ResolvedInteractionTarget> {
-  const warning = await tryResolveOutOfBoundsPointWarning(runtime, options, target);
+  const warning = await resolvePointTargetWarning(runtime, options, target);
   if (!params.captureEvidenceBaseline) {
     return {
       kind: 'point',
@@ -311,7 +324,7 @@ async function resolveRefInteractionTarget(
     : await readRefResolution(runtime, options, target);
   const nodes = tree.nodes;
   // #1542: point/response read from the returned (possibly rescue-patched) node.
-  const visibleNode = await runInteractionPipelineStages({
+  const { node: visibleNode, tapPoint: point } = await runInteractionPipelineStages({
     policy: params.pipeline,
     nodes,
     node: resolved.node,
@@ -322,11 +335,12 @@ async function resolveRefInteractionTarget(
       offscreen: async (node, tree) =>
         await assertVisibleRefTarget(runtime, options, node, tree, target.ref, params),
     },
-  });
-  const point = resolveNodeTouchPoint(visibleNode, nodes, {
-    invalidMessage: `Ref ${target.ref} not found or has invalid bounds`,
-    blockedTargetLabel: `Ref ${target.ref}`,
-    blockedTargetDetails: { ref: `@${normalizeRef(target.ref) ?? visibleNode.ref}` },
+    resolveTapPoint: (node) =>
+      resolveNodeTouchPoint(node, nodes, {
+        invalidMessage: `Ref ${target.ref} not found or has invalid bounds`,
+        blockedTargetLabel: `Ref ${target.ref}`,
+        blockedTargetDetails: { ref: `@${normalizeRef(target.ref) ?? node.ref}` },
+      }),
   });
   return {
     kind: 'ref',
@@ -376,7 +390,7 @@ async function resolveSelectorInteractionTarget(
   }
   // #1542: see the ref-target twin above.
   const selected = resolved;
-  const visibleNode = await runInteractionPipelineStages({
+  const { node: visibleNode, tapPoint: point } = await runInteractionPipelineStages({
     policy: params.pipeline,
     nodes: capture.snapshot.nodes,
     node: selected.node,
@@ -387,11 +401,12 @@ async function resolveSelectorInteractionTarget(
       offscreen: async (node, tree) =>
         await assertVisibleSelectorTarget(runtime, options, node, tree, selected.selector, params),
     },
-  });
-  const point = resolveNodeTouchPoint(visibleNode, capture.snapshot.nodes, {
-    invalidMessage: `Selector ${resolved.selector} resolved to invalid bounds`,
-    blockedTargetLabel: `Selector ${selectorExpression}`,
-    blockedTargetDetails: { selector: selectorExpression },
+    resolveTapPoint: (node) =>
+      resolveNodeTouchPoint(node, capture.snapshot.nodes, {
+        invalidMessage: `Selector ${resolved.selector} resolved to invalid bounds`,
+        blockedTargetLabel: `Selector ${selectorExpression}`,
+        blockedTargetDetails: { selector: selectorExpression },
+      }),
   });
   return {
     kind: 'selector',
@@ -627,18 +642,25 @@ function describeNonHittableTarget(
 }
 
 /**
- * Every node stage this action's row declares, plus the covered refusal the
- * interaction runtime owns. Which stages run is the row's decision; every
- * acting path — selector, ref, and the native-ref preflight — enters them here.
+ * Every node stage this action's row declares, plus the covered and keyboard refusals the
+ * interaction runtime owns. Which stages run is the row's decision; every acting path — selector,
+ * ref, and the native-ref preflight — enters them here, which is what keeps the native-ref fast
+ * path from succeeding on a target the shared rules would refuse.
+ *
+ * Each path hands in the resolver that produces the point it taps with, and taps the point that
+ * comes back, so the keyboard guard measures the coordinate the interaction is actually made of and no
+ * path derives a second one. A path whose point can fail to exist — the native-ref fast path taps by
+ * ref, reading the rect center the platform aims at — says so in its resolver's return type.
  */
-async function runInteractionPipelineStages(params: {
+async function runInteractionPipelineStages<TPoint extends Point | null>(params: {
   policy: SelectorPipelinePolicy;
   nodes: SnapshotState['nodes'];
   node: SnapshotNode;
   action: InteractionAction;
   label: string;
   hooks: SelectorPipelineHooks;
-}): Promise<SnapshotNode> {
+  resolveTapPoint: (node: SnapshotNode) => TPoint;
+}): Promise<{ node: SnapshotNode; tapPoint: TPoint }> {
   const target = await runNodePipelineStages(
     params.policy,
     params.nodes,
@@ -652,7 +674,15 @@ async function runInteractionPipelineStages(params: {
       action: params.action,
     });
   }
-  return target.node;
+  const tapPoint = params.resolveTapPoint(target.node);
+  assertTapTargetClearOfVisibleKeyboard({
+    nodes: params.nodes,
+    node: target.node,
+    action: params.action,
+    label: params.label,
+    tapPoint,
+  });
+  return { node: target.node, tapPoint };
 }
 
 function buildCoveredInteractionError(params: {
@@ -671,21 +701,6 @@ function buildCoveredInteractionError(params: {
       interactionBlocked: params.node.interactionBlocked,
     },
   );
-}
-
-function interactionVerb(action: InteractionAction): string {
-  switch (action) {
-    case 'fill':
-      return 'be filled';
-    case 'focus':
-      return 'be focused';
-    case 'longPress':
-      return 'be long-pressed';
-    case 'hover':
-      return 'be hovered';
-    default:
-      return 'be tapped';
-  }
 }
 
 export async function captureInteractionSnapshot(
@@ -987,9 +1002,9 @@ export async function preflightNativeRefInteraction(
   // `resolvedTarget` whatever the command: its `none` promotion is what holds
   // ADR 0011's "the preflight never changes which element the backend acts on".
   const pipeline = SELECTOR_PIPELINE_POLICIES.resolvedTarget;
-  // #1542: dispatches by REF, not coordinate, so no point to re-derive — but
+  // #1542: dispatches by REF, not coordinate, so no point is re-derived for the dispatch — but
   // evidence/annotation below still describes the returned (visible) node.
-  const visibleNode = await runInteractionPipelineStages({
+  const { node: visibleNode } = await runInteractionPipelineStages({
     policy: pipeline,
     nodes,
     node: resolved.node,
@@ -1002,6 +1017,7 @@ export async function preflightNativeRefInteraction(
           pipeline,
         }),
     },
+    resolveTapPoint: (node) => resolveRectCenter(node.rect),
   });
   return {
     ...describeNonHittableTarget(visibleNode, action),

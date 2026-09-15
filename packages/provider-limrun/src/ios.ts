@@ -5,7 +5,7 @@ import type {
   ProviderDeviceInstallOptions,
   ProviderDeviceInstallResult,
 } from '@agent-device/contracts/device';
-import type { Interactor } from '@agent-device/contracts/interactor-types';
+import type { FillBackendResult, Interactor } from '@agent-device/contracts/interactor-types';
 import type { DeviceInfo } from '@agent-device/kernel/device';
 import { AppError } from '@agent-device/kernel/errors';
 import type Limrun from '@limrun/api';
@@ -226,19 +226,53 @@ class LimrunIosInteractor implements Interactor {
   }
 
   async type(text: string, delayMs?: number): Promise<void> {
+    await this.enterText(text, delayMs);
+  }
+
+  async fill(x: number, y: number, text: string, delayMs?: number): Promise<FillBackendResult> {
+    // Loaded on the fill path to keep this provider's declared import-time closure budget.
+    const { awaitLimrunTextEntryFocus, readLimrunUnambiguousTapTargets, readLimrunTextEntryFocus } =
+      await import('./text-entry-focus.ts');
+    // Read before the tap: the witness needs to know what was under this point.
+    const targetsAtPoint = readLimrunUnambiguousTapTargets(
+      await this.session.client.elementTree(),
+      x,
+      y,
+    );
+    await this.tap(x, y);
+    const textEntryReadiness = await awaitLimrunTextEntryFocus({
+      targetsAtPoint,
+      readFocus: async () => readLimrunTextEntryFocus(await this.session.client.elementTree()),
+      sleep: (milliseconds) => sleep(milliseconds),
+      x,
+      y,
+    });
+    // Select first: iOS replaces a selection on the next key, so `fill` replaces and
+    // an empty fill clears.
+    await this.session.client.pressKey('a', ['command']);
+    if (text.length === 0) {
+      await this.session.client.pressKey('delete');
+      return { textEntryReadiness };
+    }
+    await this.enterText(text, delayMs);
+    return { textEntryReadiness };
+  }
+
+  /**
+   * Types into whatever holds text-entry focus, character by character when a delay is
+   * asked for. Focus targeting belongs to the caller, so the provider's own scan for a
+   * globally focused element is skipped: an app can expose fields that take keys without
+   * ever reporting one.
+   */
+  private async enterText(text: string, delayMs?: number): Promise<void> {
     if (delayMs && delayMs > 0) {
       for (const char of Array.from(text)) {
-        await this.session.client.typeText(char);
+        await this.session.client.typeText(char, false, { requireFocus: false });
         await sleep(delayMs);
       }
       return;
     }
-    await this.session.client.typeText(text);
-  }
-
-  async fill(x: number, y: number, text: string): Promise<void> {
-    await this.tap(x, y);
-    await this.session.client.typeText(text);
+    await this.session.client.typeText(text, false, { requireFocus: false });
   }
 
   async scroll(direction: 'up' | 'down' | 'left' | 'right', options?: { pixels?: number }) {

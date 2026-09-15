@@ -56,6 +56,22 @@ whether the runner is alive and accepting new HTTP requests.
 Dead cached runner processes are invalidated without graceful `shutdown`. A process that already
 stopped cannot answer the shutdown request, so graceful cleanup only adds stale-listener delay.
 
+The runner stamps its live main-thread occupancy (`runnerMainThreadBusy`) onto every successful
+response and tags the execution-watchdog timeout with the typed `MAIN_THREAD_TIMEOUT` code, so the
+daemon learns the main thread is occupied from the stalling command itself, not only from a later
+`RUNNER_BUSY` refusal. The daemon mirrors that occupancy on the `RunnerSession`: set on `RUNNER_BUSY`
+or `MAIN_THREAD_TIMEOUT`, cleared by any other served runner reply (which reached the main thread and
+therefore drained), and left intact by a transport failure or an unstamped recovered response. A
+healthy `ok` is never read as proof of drain because a private-AX snapshot can be served while an
+abandoned tree crawl still grinds on the XCTest main thread (#2552).
+
+Close that would retain a runner for reuse first stops it when that occupancy is set, awaiting the
+stop so the lease is released before the next request, because a runner still finishing
+watchdog-abandoned work refuses every command until it drains or escalates to `RUNNER_WEDGED`; pooling
+it back to the next `open` hands the same stalled runner to the caller and `close` recovers nothing.
+Killing the process is the only way to abort uncancellable XCTest work. This is the `RUNNER_WEDGED`
+restart from #1105 applied at the close boundary rather than after the wedge threshold elapses.
+
 When XCTest reports a root accessibility snapshot failure such as `kAXErrorIllegalArgument`, the
 runner treats the cached app target as suspect. Interactive snapshots fail closed to a truncated
 root-only payload instead of issuing more flat fallback queries against the same broken tree, and
@@ -83,6 +99,10 @@ successful interaction and the runner should stay alive.
 If xcodebuild still exits for another reason, the next command detects the stale runner through
 process/liveness checks and avoids the old 15-second graceful-shutdown wait. The remaining latency is
 fresh xcodebuild runner startup, not a stale transport stall.
+
+A `close` then `open` on a runner still draining abandoned main-thread work now pays a fresh runner boot
+instead of inheriting the stalled one, so the wedge no longer survives the close/open cycle. Runners
+that were never reported busy keep the existing warm-reuse path unchanged.
 
 The daemon no longer models a generic "recent success" cache as a runner-health signal. A proven
 healthy mutating response for the same app — recorded only after the `runnerFatal` check and only

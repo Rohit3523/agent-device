@@ -19,7 +19,7 @@ import { runApplePressSeries } from './runner-sequence.ts';
 import {
   detachIosSimulatorRunnerSessionsForShutdown,
   getRunnerSessionSnapshot,
-  scheduleIosRunnerIdleStop,
+  releaseIosRunnerOnClose,
   stopAllIosRunnerSessions,
   stopIosRunnerSession,
 } from './runner-session.ts';
@@ -44,7 +44,7 @@ export type AppleRunnerClient = {
   hasCachedAppleRunnerArtifact: typeof hasCachedAppleRunnerArtifact;
   detachIosSimulatorRunnerSessionsForShutdown: typeof detachIosSimulatorRunnerSessionsForShutdown;
   getRunnerSessionSnapshot: typeof getRunnerSessionSnapshot;
-  scheduleIosRunnerIdleStop: typeof scheduleIosRunnerIdleStop;
+  releaseIosRunnerOnClose: typeof releaseIosRunnerOnClose;
   stopIosRunnerSession: typeof stopIosRunnerSession;
   stopAllIosRunnerSessions: typeof stopAllIosRunnerSessions;
   runApplePressSeries: typeof runApplePressSeries;
@@ -75,7 +75,7 @@ export function createAppleRunnerClient(host: AppleRunnerHost): AppleRunnerClien
     hasCachedAppleRunnerArtifact,
     detachIosSimulatorRunnerSessionsForShutdown,
     getRunnerSessionSnapshot,
-    scheduleIosRunnerIdleStop,
+    releaseIosRunnerOnClose,
     stopIosRunnerSession,
     stopAllIosRunnerSessions,
     runApplePressSeries,

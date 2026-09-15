@@ -22,8 +22,8 @@ import { mkdtempForTestSync } from '../../../../__tests__/test-utils/tmp-dir.ts'
 
 vi.mock('@agent-device/platform-apple/runner/operations', () => ({
   resolveRunnerAppBundleId: vi.fn(),
-  scheduleIosRunnerIdleStop: vi.fn(),
   stopIosRunnerSession: vi.fn(),
+  releaseIosRunnerOnClose: vi.fn(async () => {}),
 }));
 vi.mock('@agent-device/platform-apple/perf', () => ({
   cleanupAppleXctracePerfCapture: vi.fn(async () => ({})),

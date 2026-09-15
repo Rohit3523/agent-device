@@ -33,6 +33,7 @@ import {
   withRunnerCommandId,
   type RunnerCommand,
   resolveRunnerFatalErrorReason,
+  isRunnerMainThreadOccupiedError,
 } from './runner-contract.ts';
 import {
   canSkipRunnerReadinessPreflightAfterHealthyMutation,
@@ -579,6 +580,32 @@ export async function stopIosRunnerSession(deviceId: string): Promise<void> {
   });
 }
 
+/**
+ * Releases a runner at session close, preferring warm reuse only when the runner is actually
+ * reusable. A non-retained close, or a retained close over a runner whose last exchange reported
+ * main-thread work still draining, stops it now: a busy runner refuses every command until it drains
+ * or wedges, so pooling it back hands the same stalled process to the next `open` (#2552). An idle
+ * retained runner keeps warm reuse via the idle-stop timer. The decision is owned here because the
+ * occupancy fact lives on the session, and awaited so `close` returns only once the lease is gone.
+ */
+export async function releaseIosRunnerOnClose(
+  deviceId: string,
+  options: { retain: boolean },
+): Promise<void> {
+  if (options.retain && runnerSessions.get(deviceId)?.runnerMainThreadBusy !== true) {
+    scheduleIosRunnerIdleStop(deviceId);
+    return;
+  }
+  if (options.retain) {
+    emitDiagnostic({
+      level: 'info',
+      phase: 'ios_runner_retain_skipped_busy',
+      data: { deviceId },
+    });
+  }
+  await stopIosRunnerSession(deviceId);
+}
+
 export async function abortAllIosRunnerSessions(): Promise<void> {
   const activeSessions = Array.from(runnerSessions.values());
   await abortRunnerSessionsAndPrepProcesses(activeSessions);
@@ -739,6 +766,15 @@ export async function executeRunnerCommandWithSession(
   }
   try {
     const data = await parseRunnerResponse(response, session, logPath);
+    // Mirror the runner's own main-thread occupancy stamped on this response: a runner that
+    // served a read off the XCTest channel (e.g. a private-AX capture) while a tree crawl it
+    // abandoned still grinds reports busy, so the healthy response must not be read as drained.
+    // Only a present stamp carries information; a recovered or journal-replayed response is
+    // written unstamped by design, and its absence must leave a prior busy report intact.
+    const stampedMainThreadBusy = readRunnerMainThreadBusy(data);
+    if (stampedMainThreadBusy !== undefined) {
+      session.runnerMainThreadBusy = stampedMainThreadBusy;
+    }
     const runnerFatalReason = resolveRunnerFatalReason(data);
     if (runnerFatalReason) {
       session.lastHealthyMutation = undefined;
@@ -751,6 +787,15 @@ export async function executeRunnerCommandWithSession(
     }
     return data;
   } catch (error) {
+    // A main-thread occupancy report (`RUNNER_BUSY`, or the `MAIN_THREAD_TIMEOUT` the stalling
+    // command itself returns) marks the runner still draining. Any OTHER structured runner reply was
+    // served off that abandoned work, so it has drained; a transport-shaped error answered nothing
+    // and leaves the report intact (#2552).
+    if (isRunnerMainThreadOccupiedError(error)) {
+      session.runnerMainThreadBusy = true;
+    } else if (isStructuredRunnerFailure(error)) {
+      session.runnerMainThreadBusy = false;
+    }
     const runnerFatalReason = resolveRunnerFatalErrorReason(error);
     if (runnerFatalReason) {
       session.lastHealthyMutation = undefined;
@@ -764,6 +809,10 @@ export async function executeRunnerCommandWithSession(
     if (isStructuredRunnerFailure(error)) throw error;
     throw markSkippedPreflightTransportError(error, session, preflightDecision);
   }
+}
+
+function readRunnerMainThreadBusy(data: Record<string, unknown>): boolean | undefined {
+  return typeof data.runnerMainThreadBusy === 'boolean' ? data.runnerMainThreadBusy : undefined;
 }
 
 function isStructuredRunnerFailure(error: unknown): boolean {

@@ -999,6 +999,14 @@ extension RunnerTests {
     case idle
     case busy(abandonedForSeconds: TimeInterval)
     case wedged(abandonedForSeconds: TimeInterval)
+
+    /// Whether the main thread is occupied by watchdog-abandoned work, for the occupancy stamp that
+    /// every successful response carries. Wedged is still occupied: it only differs in that a
+    /// restart, not waiting, is the cure.
+    var reportsMainThreadBusy: Bool {
+      if case .idle = self { return false }
+      return true
+    }
   }
 
   func currentMainThreadBusyState() -> MainThreadBusyState {
@@ -2187,7 +2195,7 @@ extension RunnerTests {
             code: "UNSUPPORTED_OPERATION",
             message: "Unable to dismiss the iOS keyboard: the keyboard exposes no dismiss key, and background taps are never attempted (no tap outside the keyboard can be proven side-effect-free)",
             hint:
-              "The on-screen keyboard usually does not block agent-device interactions: press the next target directly instead of retrying dismiss. If that press fails or reports no visible effect, scroll the target into view, or use keyboard enter to press the return key when submission is wanted."
+              "An element whose center sits behind the on-screen keyboard is refused with tap_keyboard_occludes_target; one whose center stays above the keys presses normally. To end editing, tap the app's own Done/Cancel control, or use keyboard enter to press the return key when submission is wanted."
           )
         )
       }

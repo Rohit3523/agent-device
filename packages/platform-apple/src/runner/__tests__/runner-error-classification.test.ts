@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
-import { AppError } from '@agent-device/kernel/errors';
+import { AppError, createRequestCanceledError } from '@agent-device/kernel/errors';
 import {
   RUNNER_ERROR_RULES,
   isRetryableRunnerError,
   resolveRunnerFatalErrorReason,
+  shouldRebuildCachedRunnerArtifact,
+  shouldRestartRunnerAfterReadinessPreflight,
   shouldRestartRunnerBeforeCommandSend,
   shouldRetryRunnerConnectError,
 } from '../runner-contract.ts';
@@ -32,7 +34,12 @@ test('transport-shaped failures are retryable', () => {
 });
 
 test('boot-shaped failures are not retryable', () => {
-  assert.equal(isRetryableRunnerError(commandFailed('xcodebuild exited early (code 65)')), false);
+  assert.equal(
+    isRetryableRunnerError(
+      commandFailed('Runner did not accept connection (xcodebuild exited early)'),
+    ),
+    false,
+  );
   assert.equal(
     isRetryableRunnerError(commandFailed('Device is busy (Connecting to Simulator)')),
     false,
@@ -68,6 +75,99 @@ test('connect loop stops for terminal verdicts', () => {
   assert.equal(shouldRetryRunnerConnectError(unattached), false);
   // The same code without the usbmux evidence keeps waiting.
   assert.equal(shouldRetryRunnerConnectError(new AppError('DEVICE_NOT_FOUND', 'gone')), true);
+});
+
+// --- readiness preflight ---
+
+test('the preflight marker alone decides the restart', () => {
+  // The marker is applied by the preflight's own catch, whatever it was waiting on when it gave
+  // up: a killed fallback, an exhausted probe, a refusal. Which of those arrived is not evidence
+  // about whether the command reached the runner, and the marker is.
+  const killedSpawn = commandFailed('xcrun timed out after 45000ms', {
+    cmd: 'xcrun',
+    timeoutMs: 45_000,
+    runnerReadinessPreflightFailed: true,
+  });
+  assert.equal(shouldRestartRunnerAfterReadinessPreflight(killedSpawn), true);
+  assert.equal(
+    shouldRestartRunnerAfterReadinessPreflight(
+      commandFailed('Runner readiness refused', { runnerReadinessPreflightFailed: true }),
+    ),
+    true,
+  );
+  // The restart the marker authorises is a new session, not more waiting inside this one.
+  assert.equal(shouldRetryRunnerConnectError(killedSpawn), true);
+  // Without the marker the same two shapes say nothing about the command having been written.
+  assert.equal(
+    shouldRestartRunnerAfterReadinessPreflight(
+      commandFailed('xcrun timed out after 45000ms', { cmd: 'xcrun', timeoutMs: 45_000 }),
+    ),
+    false,
+  );
+  assert.equal(
+    shouldRestartRunnerAfterReadinessPreflight(commandFailed('Runner readiness refused')),
+    false,
+  );
+  // The same catch marks a caller that stopped waiting. That mark is not a runner that stopped
+  // answering: the command was canceled, so no restart has a request left to serve.
+  assert.equal(
+    shouldRestartRunnerAfterReadinessPreflight(
+      createRequestCanceledError({ runnerReadinessPreflightFailed: true }),
+    ),
+    false,
+  );
+});
+
+test('a deadline on its own earns no recovery verdict', () => {
+  // The same recorded budget covers a wait inside the connect loop, where waiting is
+  // right, and a fetch that died after the command was written, where replaying is not.
+  const deadline = commandFailed('Runner command deadline exceeded', {
+    port: 8100,
+    timeoutMs: 45_000,
+  });
+  assert.equal(isRetryableRunnerError(deadline), false);
+  assert.equal(shouldRestartRunnerBeforeCommandSend(deadline), false);
+  assert.equal(shouldRestartRunnerAfterReadinessPreflight(deadline), false);
+  assert.equal(shouldRebuildCachedRunnerArtifact(deadline), false);
+  assert.equal(shouldRetryRunnerConnectError(deadline), true);
+});
+
+// --- restored-artifact axis (shouldRebuildCachedRunnerArtifact) ---
+
+test('only a runner that never accepted a connection indicts the cached artifact', () => {
+  assert.equal(
+    shouldRebuildCachedRunnerArtifact(commandFailed('Runner endpoint probe failed')),
+    true,
+  );
+  assert.equal(
+    shouldRebuildCachedRunnerArtifact(commandFailed('Runner did not accept connection')),
+    true,
+  );
+  assert.equal(
+    shouldRebuildCachedRunnerArtifact(
+      commandFailed('Runner did not accept connection (simctl spawn)', { port: 8100 }),
+    ),
+    true,
+  );
+  // Wiping derived data cannot fix a boot that refuses to compile, and its message
+  // otherwise reads as a refused connection.
+  assert.equal(
+    shouldRebuildCachedRunnerArtifact(
+      commandFailed('Runner did not accept connection (xcodebuild exited early)', {
+        port: 8100,
+        logPath: '/tmp/runner.log',
+      }),
+    ),
+    false,
+  );
+  assert.equal(shouldRebuildCachedRunnerArtifact(commandFailed('fetch failed')), false);
+});
+
+test('a device that is busy connecting is a terminal connect verdict', () => {
+  assert.equal(
+    shouldRetryRunnerConnectError(commandFailed('Device is busy (Connecting to Simulator)')),
+    false,
+  );
 });
 
 // --- session-fatal axis (resolveRunnerFatalErrorReason) ---

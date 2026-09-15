@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Changed (android): the snapshot helper release manifest no longer carries `installArgs`, and the
+  helper installs with a fixed `adb install -r` like the IME helper. The array only ever spelled
+  `install -r` plus the `-t` that #2603 retired with the `testOnly` flag, so the manifest → flag →
+  option → flag round trip and its allowlist carried nothing. Older manifests that still contain
+  the field parse unchanged; the field is ignored. The adb provider `install` capability now takes
+  only `replace` (#2364).
 - Fixed: BrowserStack sessions honour `--provider-project`, `--provider-build`, and
   `--provider-session-name`. The capability builder emitted the legacy JSON Wire keys `device`,
   `os_version`, and `app` at the top level next to the W3C `bstack:options` block; the hub treats a
@@ -14,6 +20,21 @@
   BrowserStack runs for the session, as `bstack:options.appiumVersion`. Unset, BrowserStack falls
   back to Appium 1.x, which predates the `mobile:` commands the interactor issues (`deepLink`,
   `pressButton`, `activateApp`).
+- Changed (iOS runner): what recovers a stuck runner is decided by the recorded error, not by its
+  wording. A readiness preflight marks the error it gives up with, and that marker is now the whole
+  test for restarting the session and replaying the command — except for a request that was canceled,
+  which that same catch also marks: a command nobody is going to send again has no restart to spend,
+  and the session it would tear down may be one that still works. Two message checks decided it before,
+  and a preflight reaches the caller in whatever shape its connect loop ended with — "Runner did not
+  accept connection", "Runner endpoint probe failed", a killed `simctl` fallback, a post that ran out
+  of its budget — so only some of those restarted and the rest failed the command. The other half is
+  what no longer happens: when a slow
+  boot spends the whole prepare budget, the health check reports "prepare ios-runner timed out", and
+  that no longer wipes a restored `xcodebuild` artifact on the way to a rebuild — the runner session
+  is invalidated and prepare retries with the artifact intact. Only a failure that indicts the
+  artifact rebuilds it, so a runner that refuses the connection or never answers on any route still
+  wipes it and rebuilds, which is what that rule is for.
+
 - Changed (sessions): the implicit session is now keyed by workspace **and platform**, so one checkout
   can drive iOS and Android without inventing a `--session` name for every command (#2580). An
   implicit session was addressed by `cwd:<workspace>:default`, one slot per checkout, and it stayed

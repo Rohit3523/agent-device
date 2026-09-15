@@ -37,8 +37,8 @@ export const detachIosSimulatorRunnerSessionsForShutdown: AppleRunnerClient['det
   client.detachIosSimulatorRunnerSessionsForShutdown;
 export const getRunnerSessionSnapshot: AppleRunnerClient['getRunnerSessionSnapshot'] =
   client.getRunnerSessionSnapshot;
-export const scheduleIosRunnerIdleStop: AppleRunnerClient['scheduleIosRunnerIdleStop'] =
-  client.scheduleIosRunnerIdleStop;
+export const releaseIosRunnerOnClose: AppleRunnerClient['releaseIosRunnerOnClose'] =
+  client.releaseIosRunnerOnClose;
 export const stopIosRunnerSession: AppleRunnerClient['stopIosRunnerSession'] =
   client.stopIosRunnerSession;
 export const stopAllIosRunnerSessions: AppleRunnerClient['stopAllIosRunnerSessions'] =

@@ -86,10 +86,9 @@ export function createAppleApplicationTools(): AppleApplicationTools {
         requestId: execution.requestId,
       });
     },
-    scheduleRunnerIdleStop: (deviceId) => {
-      void loadRunnerOperations().then(({ scheduleIosRunnerIdleStop }) =>
-        scheduleIosRunnerIdleStop(deviceId),
-      );
+    releaseRunnerOnClose: async (deviceId, options) => {
+      const { releaseIosRunnerOnClose } = await loadRunnerOperations();
+      await releaseIosRunnerOnClose(deviceId, options);
     },
     prepareRunner: async (device, input, signal) => {
       const { Deadline } = await loadRetry();
