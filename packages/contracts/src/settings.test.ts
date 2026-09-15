@@ -1,6 +1,8 @@
 import { describe, expect, expectTypeOf, test } from 'vitest';
 import {
+  ANDROID_PERMISSION_TARGETS,
   getUnsupportedMacOsSettingMessage,
+  IOS_PERMISSION_TARGETS,
   isMacOsSettingSupported,
   MACOS_PERMISSION_TARGETS,
   MOBILE_PERMISSION_TARGETS,
@@ -87,6 +89,24 @@ describe('the declared permission vocabulary', () => {
     expect([...MACOS_PERMISSION_TARGETS]).toEqual([...MACOS_ONLY_TARGETS]);
     expect([...PERMISSION_ACTIONS]).toEqual(['grant', 'deny', 'reset']);
     expect([...PERMISSION_MODES]).toEqual(['full', 'limited']);
+  });
+
+  test('per-platform targets stay subsets of the accepted vocabulary', () => {
+    expect([...IOS_PERMISSION_TARGETS]).toEqual([...MOBILE_TARGETS]);
+    expect([...ANDROID_PERMISSION_TARGETS]).toEqual([
+      'all',
+      'camera',
+      'microphone',
+      'photos',
+      'contacts',
+      'notifications',
+      'calendar',
+      'location',
+      'media-library',
+    ]);
+    for (const target of ANDROID_PERMISSION_TARGETS) {
+      expect(MOBILE_TARGETS).toContain(target);
+    }
   });
 });
 

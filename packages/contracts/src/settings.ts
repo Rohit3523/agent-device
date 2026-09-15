@@ -37,9 +37,33 @@ export const MACOS_PERMISSION_TARGETS = [
   'input-monitoring',
 ] as const;
 
+/**
+ * The names each mobile backend serves individually (`all` travels as one
+ * backend call and resolves there). iOS serves the whole mobile vocabulary;
+ * Android serves the subset below. Declared once so the Android table, the
+ * Maestro adapter lists, and the hint text cannot drift from each other —
+ * which is what left `bluetooth`/`phone`/`sms`/`storage` advertised but
+ * unreachable.
+ */
+export const IOS_PERMISSION_TARGETS = MOBILE_PERMISSION_TARGETS;
+
+export const ANDROID_PERMISSION_TARGETS = [
+  'all',
+  'camera',
+  'microphone',
+  'photos',
+  'contacts',
+  'notifications',
+  'calendar',
+  'location',
+  'media-library',
+] as const;
+
 export type PermissionAction = (typeof PERMISSION_ACTIONS)[number];
 export type PermissionMode = (typeof PERMISSION_MODES)[number];
 export type MobilePermissionTarget = (typeof MOBILE_PERMISSION_TARGETS)[number];
+export type IosPermissionTarget = (typeof IOS_PERMISSION_TARGETS)[number];
+export type AndroidPermissionTarget = (typeof ANDROID_PERMISSION_TARGETS)[number];
 /**
  * The app-scoped vocabulary `parsePermissionTarget` returns. The public client's `PermissionTarget`
  * in `client-settings.ts` is wider: it also names the macOS targets.

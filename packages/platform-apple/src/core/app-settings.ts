@@ -1,5 +1,6 @@
 import {
   getUnsupportedMacOsSettingMessage,
+  IOS_PERMISSION_TARGETS,
   parsePermissionAction,
   parsePermissionTarget,
   type SettingOptions,
@@ -404,7 +405,7 @@ function parseIosPermissionTarget(
   }
   throw new AppError(
     'INVALID_ARGS',
-    `Unsupported permission target: ${permissionTarget}. Use all|camera|microphone|photos|contacts|contacts-limited|notifications|calendar|location|location-always|media-library|motion|reminders|siri.`,
+    `Unsupported permission target: ${permissionTarget}. Use ${IOS_PERMISSION_TARGETS.join('|')}.`,
   );
 }
 

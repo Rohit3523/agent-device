@@ -56,15 +56,15 @@ describe('mapMaestroSetPermissions', () => {
     ]);
   });
 
-  test('maps the extended Android names to backend targets', () => {
-    assert.deepEqual(mapMaestroSetPermissions({ bluetooth: 'allow' }, 'android'), [
-      { state: 'grant', permission: 'bluetooth' },
+  test('maps the Android names to backend targets', () => {
+    assert.deepEqual(mapMaestroSetPermissions({ calendar: 'allow' }, 'android'), [
+      { state: 'grant', permission: 'calendar' },
     ]);
     assert.deepEqual(mapMaestroSetPermissions({ location: 'deny' }, 'android'), [
       { state: 'deny', permission: 'location' },
     ]);
-    assert.deepEqual(mapMaestroSetPermissions({ sms: 'unset' }, 'android'), [
-      { state: 'reset', permission: 'sms' },
+    assert.deepEqual(mapMaestroSetPermissions({ microphone: 'unset' }, 'android'), [
+      { state: 'reset', permission: 'microphone' },
     ]);
   });
 
@@ -73,6 +73,14 @@ describe('mapMaestroSetPermissions', () => {
       () => mapMaestroSetPermissions({ health: 'allow' }, 'android'),
       /health.*not supported on android/i,
     );
+    // bluetooth/phone/sms/storage were dropped: advertised but unreachable —
+    // the contracts parser never accepted them, so the adapter must not either.
+    for (const name of ['bluetooth', 'phone', 'sms', 'storage']) {
+      assert.throws(
+        () => mapMaestroSetPermissions({ [name]: 'allow' }, 'android'),
+        new RegExp(`${name}.*not supported on android`, 'i'),
+      );
+    }
     assert.throws(
       () => mapMaestroSetPermissions({ speech: 'allow' }, 'ios'),
       /speech.*not supported on ios/i,

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Added: `settings permission <grant|deny|reset> all` on iOS simulators and Android, plus
+  `calendar`/`location`/`media-library` on Android. `contacts` now fans out to
+  `READ_CONTACTS`+`WRITE_CONTACTS` (like `location` to `FINE`+`COARSE`); named multi-id
+  targets intersect the package's declared permissions so read-only or coarse-only apps
+  succeed, and `deny|reset` of a multi-id target returns a comma-joined `permission` list.
+  The per-platform servable sets live once in `@agent-device/contracts/settings`
+  (`ANDROID_PERMISSION_TARGETS`/`IOS_PERMISSION_TARGETS`).
 - Changed (android): the snapshot helper release manifest no longer carries `installArgs`, and the
   helper installs with a fixed `adb install -r` like the IME helper. The array only ever spelled
   `install -r` plus the `-t` that #2603 retired with the `testOnly` flag, so the manifest → flag →

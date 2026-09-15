@@ -135,7 +135,6 @@ const BARE_UPSTREAM_CANONICAL: Record<string, CanonicalCommand> = {
   BackPressCommand: { kind: 'back' },
   HideKeyboardCommand: { kind: 'hideKeyboard' },
   TakeScreenshotCommand: { kind: 'takeScreenshot' },
-  StopAppCommand: { kind: 'stopApp' },
   RunScriptCommand: { kind: 'runScript' },
 };
 
@@ -365,13 +364,13 @@ function isBareAgentCommand(command: MaestroCommand): command is BareAgentComman
 
 type AgentLifecycleCommand = Extract<
   MaestroCommand,
-  { kind: 'launchApp' | 'stopApp' | 'clearState' }
+  { kind: (typeof AGENT_LIFECYCLE_KINDS)[number] }
 >;
 
+const AGENT_LIFECYCLE_KINDS = ['launchApp', 'stopApp', 'clearState'] as const;
+
 function isAgentLifecycleCommand(command: MaestroCommand): command is AgentLifecycleCommand {
-  return (
-    command.kind === 'launchApp' || command.kind === 'stopApp' || command.kind === 'clearState'
-  );
+  return (AGENT_LIFECYCLE_KINDS as readonly string[]).includes(command.kind);
 }
 
 function canonicalizeAgentLifecycleCommand(

@@ -1,5 +1,8 @@
 import { AppError } from '@agent-device/kernel/errors';
-import { MAESTRO_PERMISSION_VALUES } from '@agent-device/maestro';
+import {
+  ANDROID_PERMISSION_TARGETS,
+  IOS_PERMISSION_TARGETS,
+} from '@agent-device/contracts/settings';
 
 export type MaestroPermissionMutation = {
   readonly state: 'grant' | 'deny' | 'reset';
@@ -9,47 +12,23 @@ export type MaestroPermissionMutation = {
 
 /**
  * Canonical Maestro names each `settings permission` backend serves
- * individually. `all` is not listed: it travels as one `settings permission`
- * call and each backend resolves it (iOS `simctl privacy … all`, Android's
- * declared-permission intersection). Names outside these lists (iOS
- * speech/usertracking/homekit/health; Android custom ids) fail loudly below
- * instead of being silently skipped.
+ * individually, derived from the per-platform targets in contracts so the
+ * adapter, the hint text, and the backend tables cannot drift. `all` is not
+ * listed: it travels as one `settings permission` call and each backend
+ * resolves it (iOS `simctl privacy … all`, Android's declared-permission
+ * intersection). Names outside these lists (iOS speech/usertracking/homekit/
+ * health; Android custom ids) fail loudly below instead of being silently
+ * skipped.
  */
 const EXPANDABLE_PERMISSIONS = {
-  android: [
-    'bluetooth',
-    'calendar',
-    'camera',
-    'contacts',
-    'location',
-    'media-library',
-    'microphone',
-    'notifications',
-    'phone',
-    'photos',
-    'sms',
-    'storage',
-  ],
-  ios: [
-    'calendar',
-    'camera',
-    'contacts',
-    'location',
-    'media-library',
-    'microphone',
-    'motion',
-    'notifications',
-    'photos',
-    'reminders',
-    'siri',
-  ],
+  android: ANDROID_PERMISSION_TARGETS.filter((name) => name !== 'all'),
+  ios: IOS_PERMISSION_TARGETS.filter((name) => name !== 'all'),
 } as const;
 
-/** Per-platform hint for names the backends cannot serve yet. */
+/** Per-platform hint for names the backends cannot serve yet, derived from the same lists. */
 const UNSUPPORTED_HINTS = {
-  android:
-    'Supported: all, bluetooth, calendar, camera, contacts, location, media-library, microphone, notifications, phone, photos, sms, storage. Android custom permission ids are attempted through all, not individually.',
-  ios: 'Supported: all, calendar, camera, contacts, location, media-library, microphone, motion, notifications, photos, reminders, siri. Granular iOS values: location always|inuse|never, photos limited.',
+  android: `Supported: ${ANDROID_PERMISSION_TARGETS.join(', ')}. Android custom permission ids are attempted through all, not individually.`,
+  ios: `Supported: ${IOS_PERMISSION_TARGETS.join(', ')}. Granular iOS values: location always|inuse|never, photos limited.`,
 } as const;
 
 /** Non-canonical spellings accepted alongside the lists above. */
@@ -116,7 +95,7 @@ export function mapMaestroSetPermissions(
 /** `all` accepts only the plain values; granular ones name no single backend state. */
 function mapMaestroAll(value: string): MaestroPermissionMutation {
   const state = PLAIN_VALUE_STATES[value as keyof typeof PLAIN_VALUE_STATES];
-  if (!MAESTRO_PERMISSION_VALUES.has(value) || !state) {
+  if (!state) {
     throw new AppError(
       'INVALID_ARGS',
       `Permission 'all' can be set to 'allow', 'deny' or 'unset', not '${value}'.`,

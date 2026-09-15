@@ -123,9 +123,10 @@ test.each([
     'grant microphone',
     'grant' as const,
     { permissionTarget: 'microphone' } as const,
-    // No dumpsys: a grant cannot kill the app, so it reads no state.
+    // A grant resolves its declared ids before mutating, so it reads the dump once.
     [
       ['shell', 'am', 'get-current-user'],
+      ['shell', 'dumpsys', 'package', 'com.example.app'],
       ['shell', 'pm', 'grant', '--user', '10', 'com.example.app', MICROPHONE],
     ],
   ],
@@ -338,6 +339,109 @@ test('setAndroidSetting permission grant contacts grants both contact ids', asyn
       assert.ok(
         flat.includes('shell pm grant --user 0 com.example.app android.permission.WRITE_CONTACTS'),
         flat.join('; '),
+      );
+    },
+  );
+});
+
+function dumpsysWithRequestedIds(ids: readonly string[]): string {
+  return [
+    'Packages:',
+    '  Package [com.example.app] (abc):',
+    '    requested permissions:',
+    ...ids.map((id) => `      ${id}`),
+    '    User 0: ceDataInode=0 installed=true',
+    '      runtime permissions:',
+    ...ids.map((id) => `        ${id}: granted=false`),
+    'Queries:',
+  ].join('\n');
+}
+
+// A named multi-id target intersects the declared set like `all` does: an app
+// declaring only READ_CONTACTS gets only that id, instead of failing on the
+// missing WRITE_CONTACTS like the strict fan-out did.
+test('setAndroidSetting permission grant contacts applies the declared subset', async () => {
+  const requested = dumpsysWithRequestedIds(['android.permission.READ_CONTACTS']);
+  await withFakeAdb(
+    fakeAdb((flat) => {
+      if (flat === CURRENT_USER) return '0';
+      if (flat === DUMPSYS) return requested;
+      if (flat === 'shell pm grant --user 0 com.example.app android.permission.WRITE_CONTACTS') {
+        return {
+          stderr:
+            'SecurityException: Package com.example.app has not requested permission android.permission.WRITE_CONTACTS',
+          exitCode: 1,
+        };
+      }
+      return undefined;
+    }),
+    async ({ calls, device }) => {
+      await setAndroidSetting(device, 'permission', 'grant', 'com.example.app', {
+        permissionTarget: 'contacts',
+      });
+      const flat = calls.map((args) => args.join(' '));
+      assert.ok(
+        flat.includes('shell pm grant --user 0 com.example.app android.permission.READ_CONTACTS'),
+        flat.join('; '),
+      );
+      assert.ok(
+        !flat.includes('shell pm grant --user 0 com.example.app android.permission.WRITE_CONTACTS'),
+        flat.join('; '),
+      );
+    },
+  );
+});
+
+// Same for location: a coarse-only app gets COARSE without attempting FINE.
+test('setAndroidSetting permission grant location applies the declared subset', async () => {
+  const requested = dumpsysWithRequestedIds(['android.permission.ACCESS_COARSE_LOCATION']);
+  await withFakeAdb(
+    fakeAdb((flat) => {
+      if (flat === CURRENT_USER) return '0';
+      if (flat === DUMPSYS) return requested;
+      return undefined;
+    }),
+    async ({ calls, device }) => {
+      await setAndroidSetting(device, 'permission', 'grant', 'com.example.app', {
+        permissionTarget: 'location',
+      });
+      const flat = calls.map((args) => args.join(' '));
+      assert.ok(
+        flat.includes(
+          'shell pm grant --user 0 com.example.app android.permission.ACCESS_COARSE_LOCATION',
+        ),
+        flat.join('; '),
+      );
+      assert.ok(
+        !flat.includes(
+          'shell pm grant --user 0 com.example.app android.permission.ACCESS_FINE_LOCATION',
+        ),
+        flat.join('; '),
+      );
+    },
+  );
+});
+
+// An explicit target declaring none of its ids fails loudly with no pm call.
+test('setAndroidSetting permission grant contacts fails when none of its ids are declared', async () => {
+  const requested = dumpsysWithRequestedIds(['android.permission.CAMERA']);
+  await withFakeAdb(
+    fakeAdb((flat) => {
+      if (flat === CURRENT_USER) return '0';
+      if (flat === DUMPSYS) return requested;
+      return { stderr: `unexpected args: ${flat}`, exitCode: 1 };
+    }),
+    async ({ calls, device }) => {
+      await assertRejectsAppError(
+        () =>
+          setAndroidSetting(device, 'permission', 'grant', 'com.example.app', {
+            permissionTarget: 'contacts',
+          }),
+        { code: 'COMMAND_FAILED', message: /has not requested permission/ },
+      );
+      assert.ok(
+        calls.every((args) => !args.includes('pm') || args.includes('dumpsys')),
+        calls.map((args) => args.join(' ')).join('; '),
       );
     },
   );
