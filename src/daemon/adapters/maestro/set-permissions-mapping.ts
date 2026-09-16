@@ -1,8 +1,9 @@
 import { AppError } from '@agent-device/kernel/errors';
 import {
-  ANDROID_PERMISSION_TARGETS,
-  IOS_PERMISSION_TARGETS,
+  MAESTRO_ANDROID_PERMISSION_TARGETS,
+  MAESTRO_IOS_PERMISSION_TARGETS,
 } from '@agent-device/contracts/settings';
+import { MAESTRO_PERMISSION_VALUES } from '@agent-device/maestro';
 
 export type MaestroPermissionMutation = {
   readonly state: 'grant' | 'deny' | 'reset';
@@ -12,38 +13,38 @@ export type MaestroPermissionMutation = {
 
 /**
  * Canonical Maestro names each `settings permission` backend serves
- * individually, derived from the per-platform targets in contracts so the
- * adapter, the hint text, and the backend tables cannot drift. `all` is not
- * listed: it travels as one `settings permission` call and each backend
+ * individually, derived from the per-platform Maestro targets in contracts so
+ * the adapter, the hint text, and the backend tables cannot drift. `all` is
+ * not listed: it travels as one `settings permission` call and each backend
  * resolves it (iOS `simctl privacy … all`, Android's declared-permission
- * intersection). The iOS list additionally drops the native-only spellings
- * (`contacts-limited`, `location-always`): those are `settings permission`
- * target names, not Maestro names — a Maestro flow writes `photos: limited`
- * and `location: always` instead. Names outside these lists (iOS speech/
- * usertracking/homekit/health; Android custom ids) fail loudly below instead
- * of being silently skipped.
+ * intersection). The iOS list is an explicit Maestro allowlist, not a
+ * denylist over the native vocabulary: `contacts-limited` and
+ * `location-always` are `settings permission` target names, not Maestro
+ * names — a Maestro flow writes `photos: limited` and `location: always`
+ * instead — and a native-only target added later must not become a Maestro
+ * name without a deliberate contracts change. Names outside these lists
+ * (iOS speech/usertracking/homekit/health; Android custom ids) fail loudly
+ * below instead of being silently skipped.
  */
 const EXPANDABLE_PERMISSIONS = {
-  android: ANDROID_PERMISSION_TARGETS.filter((name) => name !== 'all'),
-  ios: IOS_PERMISSION_TARGETS.filter(
-    (name) => name !== 'all' && name !== 'contacts-limited' && name !== 'location-always',
-  ),
+  android: MAESTRO_ANDROID_PERMISSION_TARGETS.filter((name) => name !== 'all'),
+  ios: MAESTRO_IOS_PERMISSION_TARGETS.filter((name) => name !== 'all'),
 } as const;
 
-/** Per-platform hint for names the backends cannot serve yet, derived from the same lists. */
+/** Per-platform hint for names the backends cannot serve yet, from the same lists. */
 const UNSUPPORTED_HINTS = {
-  android: `Supported: ${ANDROID_PERMISSION_TARGETS.join(', ')}. Android custom permission ids are attempted through all, not individually.`,
-  ios: `Supported: ${IOS_PERMISSION_TARGETS.join(', ')}. Granular iOS values: location always|inuse|never, photos limited.`,
+  android: `Supported: ${MAESTRO_ANDROID_PERMISSION_TARGETS.join(', ')}. Android custom permission ids are attempted through all, not individually.`,
+  ios: `Supported: ${MAESTRO_IOS_PERMISSION_TARGETS.join(', ')}. Granular iOS values: location always|inuse|never, photos limited.`,
 } as const;
 
 /** Non-canonical spellings accepted alongside the lists above. */
-const PERMISSION_ALIASES: Readonly<Record<string, string>> = {
+export const MAESTRO_PERMISSION_ALIASES: Readonly<Record<string, string>> = {
   medialibrary: 'media-library',
 };
 
 function canonicalName(name: string): string {
   const normalized = name.toLowerCase();
-  return PERMISSION_ALIASES[normalized] ?? normalized;
+  return MAESTRO_PERMISSION_ALIASES[normalized] ?? normalized;
 }
 
 /** Plain values map 1:1 onto settings states; granular iOS values map per permission. */
@@ -126,6 +127,14 @@ function mapMaestroPermission(
       `Maestro permission "${name}" is not supported on ${platform} yet.`,
       { hint: UNSUPPORTED_HINTS[platform] },
     );
+  }
+  // The value vocabulary is owned by `@agent-device/maestro`
+  // (`MAESTRO_PERMISSION_VALUES`): per-permission validity lives here, but an
+  // unknown value is always INVALID_ARGS, never UNSUPPORTED_OPERATION.
+  if (!MAESTRO_PERMISSION_VALUES.has(value)) {
+    throw new AppError('INVALID_ARGS', `Maestro permission "${name}" does not accept "${value}".`, {
+      hint: GRANULAR_HINTS[name] ?? 'Use allow|deny|unset.',
+    });
   }
   const granular = GRANULAR_MUTATIONS[name]?.[value];
   if (granular) {

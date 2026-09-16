@@ -1,8 +1,88 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'vitest';
 import { MAESTRO_PERMISSION_VALUES } from '@agent-device/maestro';
-import { parseAndroidPermissionTarget } from '@agent-device/platform-android/mechanics';
-import { mapMaestroSetPermissions } from '../set-permissions-mapping.ts';
+import {
+  MAESTRO_ANDROID_PERMISSION_TARGETS,
+  MAESTRO_IOS_PERMISSION_TARGETS,
+  MOBILE_PERMISSION_TARGETS,
+} from '@agent-device/contracts/settings';
+import { AppError } from '@agent-device/kernel/errors';
+import {
+  MAESTRO_PERMISSION_ALIASES,
+  mapMaestroSetPermissions,
+  type MaestroPermissionMutation,
+} from '../set-permissions-mapping.ts';
+
+function assertIosHintListsAdmissionSet(name: string): void {
+  try {
+    mapMaestroSetPermissions({ [name]: 'allow' }, 'ios');
+  } catch (error) {
+    assert.ok(error instanceof AppError && error.code === 'UNSUPPORTED_OPERATION');
+    const hint = String((error.details as { hint?: unknown } | undefined)?.hint ?? '');
+    for (const supported of MAESTRO_IOS_PERMISSION_TARGETS) {
+      assert.ok(hint.includes(supported), `iOS hint omits ${supported} for ${name}: ${hint}`);
+    }
+    assert.ok(!hint.includes('contacts-limited'), `iOS hint lists native-only name: ${hint}`);
+    assert.ok(!hint.includes('location-always'), `iOS hint lists native-only name: ${hint}`);
+    return;
+  }
+  assert.fail(`expected iOS ${name} to be unsupported`);
+}
+
+function mapAndroidOrNull(name: string, value: string): MaestroPermissionMutation[] | null {
+  try {
+    return mapMaestroSetPermissions({ [name]: value }, 'android');
+  } catch (error) {
+    assert.ok(
+      error instanceof AppError &&
+        (error.code === 'UNSUPPORTED_OPERATION' || error.code === 'INVALID_ARGS'),
+      `unexpected ${String(error)} for Android ${name}:${value}`,
+    );
+    return null;
+  }
+}
+
+function assertAndroidMutationServable(
+  mutation: MaestroPermissionMutation,
+  servable: ReadonlySet<string>,
+): void {
+  assert.ok(
+    servable.has(mutation.permission),
+    `Android mutation ${mutation.permission} not in ${[...servable].join(',')}`,
+  );
+  assert.equal(mutation.mode, undefined);
+}
+
+function checkAndroidName(
+  name: string,
+  servable: ReadonlySet<string>,
+  checkedPlain: Set<string>,
+): number {
+  let checked = 0;
+  for (const value of MAESTRO_PERMISSION_VALUES) {
+    const mutations = mapAndroidOrNull(name, value);
+    if (!mutations) continue;
+    for (const mutation of mutations) {
+      assertAndroidMutationServable(mutation, servable);
+      checked += 1;
+      if (value === 'allow' || value === 'deny' || value === 'unset') {
+        checkedPlain.add(`${mutation.permission}:${value}`);
+      }
+    }
+  }
+  return checked;
+}
+
+function assertAndroidPlainCoverage(checkedPlain: ReadonlySet<string>): void {
+  for (const target of MAESTRO_ANDROID_PERMISSION_TARGETS) {
+    for (const value of ['allow', 'deny', 'unset'] as const) {
+      assert.ok(
+        checkedPlain.has(`${target}:${value}`),
+        `expected Android ${target}:${value} to be checked`,
+      );
+    }
+  }
+}
 
 describe('mapMaestroSetPermissions', () => {
   test('maps single permissions to grant/deny/reset', () => {
@@ -122,35 +202,26 @@ describe('mapMaestroSetPermissions', () => {
     }
   });
 
-  test('every mutation emitted for Android passes the Android parser', () => {
-    // Pins the adapter to mutations the backend serves: a value the adapter
-    // accepts must never fail halfway through `settings permission`.
-    const names = [
-      'all',
-      'camera',
-      'microphone',
-      'photos',
-      'contacts',
-      'notifications',
-      'calendar',
-      'location',
-      'media-library',
-      'contacts-limited',
-      'location-always',
-      'health',
-    ];
-    for (const name of names) {
-      for (const value of MAESTRO_PERMISSION_VALUES) {
-        let mutations;
-        try {
-          mutations = mapMaestroSetPermissions({ [name]: value }, 'android');
-        } catch {
-          continue;
-        }
-        for (const mutation of mutations) {
-          parseAndroidPermissionTarget(mutation.permission, mutation.mode);
-        }
-      }
+  test('iOS unsupported hint lists the Maestro admission set', () => {
+    // The admission set and the hint share one Maestro iOS list in contracts:
+    // a native-only spelling must fail without appearing as supported.
+    for (const name of ['contacts-limited', 'location-always', 'speech']) {
+      assertIosHintListsAdmissionSet(name);
     }
+  });
+
+  test('every mutation emitted for Android is a backend-servable pair', () => {
+    // Pins the adapter to mutations the backend serves: a value the adapter
+    // accepts must never fail halfway through `settings permission`. The
+    // backend table is typed from the same contracts list, so membership plus
+    // a missing mode is the whole contract on Android (granular values are
+    // refused above, never emitted).
+    const names = [...MOBILE_PERMISSION_TARGETS, ...Object.keys(MAESTRO_PERMISSION_ALIASES)];
+    const servable = new Set<string>(MAESTRO_ANDROID_PERMISSION_TARGETS);
+    const checkedPlain = new Set<string>();
+    let checked = 0;
+    for (const name of names) checked += checkAndroidName(name, servable, checkedPlain);
+    assert.ok(checked > 0, 'expected at least one Android mutation to be checked');
+    assertAndroidPlainCoverage(checkedPlain);
   });
 });

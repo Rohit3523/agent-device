@@ -555,6 +555,49 @@ test('setAndroidSetting permission grant all applies the declared changeable ids
   );
 });
 
+// A role-managed id (WRITE_SETTINGS on API 36: "managed by role") is
+// declared-but-not-changeable like INTERNET, so `all` skips it with a reason
+// instead of aborting — found live on com.google.android.contacts.
+test('setAndroidSetting permission all skips a role-managed id', async () => {
+  const requested = [
+    'Packages:',
+    '  Package [com.example.app] (abc):',
+    '    requested permissions:',
+    '      android.permission.WRITE_SETTINGS',
+    '      android.permission.RECORD_AUDIO',
+    '    User 0: ceDataInode=0 installed=true',
+    '      runtime permissions:',
+    '        android.permission.RECORD_AUDIO: granted=false',
+    'Queries:',
+  ].join('\n');
+  await withFakeAdb(
+    fakeAdb((flat) => {
+      if (flat === CURRENT_USER) return '0';
+      if (flat === DUMPSYS) return requested;
+      if (flat === 'shell pm grant --user 0 com.example.app android.permission.WRITE_SETTINGS') {
+        return {
+          stderr:
+            "Exception occurred while executing 'grant':\njava.lang.SecurityException: Permission android.permission.WRITE_SETTINGS is managed by role",
+          exitCode: 1,
+        };
+      }
+      return undefined;
+    }),
+    async ({ device }) => {
+      const result = await setAndroidSetting(device, 'permission', 'grant', 'com.example.app', {
+        permissionTarget: 'all',
+      });
+      assert.deepEqual(result, {
+        permission: 'all',
+        applied: ['android.permission.RECORD_AUDIO'],
+        warnings: [
+          "Skipped android.permission.WRITE_SETTINGS for com.example.app: Exception occurred while executing 'grant': java.lang.SecurityException: Permission android.permission.WRITE_SETTINGS is managed by role",
+        ],
+      });
+    },
+  );
+});
+
 // Revoke under `all` warns per held permission, like the single path.
 test('setAndroidSetting permission revoke all warns for the held runtime id', async () => {
   await withFakeAdb(

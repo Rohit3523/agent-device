@@ -319,10 +319,11 @@ async function tryPmUnit(
 
 /**
  * Only established non-changeable signals are skipped under `all`: an install
- * permission `pm` cannot touch, an id the package never requested, or a name
- * the runtime does not know as a runtime permission. Anything else (offline
- * device, dropped transport, denied op) is operational and must abort the
- * fan-out rather than let launchApp continue with half-applied permissions.
+ * permission `pm` cannot touch, an id the package never requested, a name
+ * the runtime does not know as a runtime permission, or an id managed by a
+ * role (`WRITE_SETTINGS` on API 36 reports "managed by role"). Anything else
+ * (offline device, dropped transport, denied op) is operational and must abort
+ * the fan-out rather than let launchApp continue with half-applied permissions.
  */
 function isSkippablePmStderr(stderr: string): boolean {
   const text = stderr.toLowerCase();
@@ -330,7 +331,8 @@ function isSkippablePmStderr(stderr: string): boolean {
     text.includes('not a changeable permission') ||
     text.includes('has not requested permission') ||
     text.includes('is not a runtime permission') ||
-    text.includes('unknown permission')
+    text.includes('unknown permission') ||
+    text.includes('managed by role')
   );
 }
 
@@ -423,7 +425,7 @@ async function revokeAndroidPermission(
   throw new Error(`Unhandled Android permission target: ${JSON.stringify(exhaustive)}`);
 }
 
-export function parseAndroidPermissionTarget(
+function parseAndroidPermissionTarget(
   permissionTarget: string | undefined,
   permissionMode: string | undefined,
 ):
