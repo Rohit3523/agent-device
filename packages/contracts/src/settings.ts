@@ -62,6 +62,7 @@ export const ANDROID_PERMISSION_TARGETS = [
 export type PermissionAction = (typeof PERMISSION_ACTIONS)[number];
 export type PermissionMode = (typeof PERMISSION_MODES)[number];
 export type MobilePermissionTarget = (typeof MOBILE_PERMISSION_TARGETS)[number];
+export type AndroidPermissionTarget = (typeof ANDROID_PERMISSION_TARGETS)[number];
 /**
  * The app-scoped vocabulary `parsePermissionTarget` returns. The public client's `PermissionTarget`
  * in `client-settings.ts` is wider: it also names the macOS targets.

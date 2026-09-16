@@ -16,13 +16,18 @@ export type MaestroPermissionMutation = {
  * adapter, the hint text, and the backend tables cannot drift. `all` is not
  * listed: it travels as one `settings permission` call and each backend
  * resolves it (iOS `simctl privacy … all`, Android's declared-permission
- * intersection). Names outside these lists (iOS speech/usertracking/homekit/
- * health; Android custom ids) fail loudly below instead of being silently
- * skipped.
+ * intersection). The iOS list additionally drops the native-only spellings
+ * (`contacts-limited`, `location-always`): those are `settings permission`
+ * target names, not Maestro names — a Maestro flow writes `photos: limited`
+ * and `location: always` instead. Names outside these lists (iOS speech/
+ * usertracking/homekit/health; Android custom ids) fail loudly below instead
+ * of being silently skipped.
  */
 const EXPANDABLE_PERMISSIONS = {
   android: ANDROID_PERMISSION_TARGETS.filter((name) => name !== 'all'),
-  ios: IOS_PERMISSION_TARGETS.filter((name) => name !== 'all'),
+  ios: IOS_PERMISSION_TARGETS.filter(
+    (name) => name !== 'all' && name !== 'contacts-limited' && name !== 'location-always',
+  ),
 } as const;
 
 /** Per-platform hint for names the backends cannot serve yet, derived from the same lists. */
@@ -44,6 +49,12 @@ function canonicalName(name: string): string {
 /** Plain values map 1:1 onto settings states; granular iOS values map per permission. */
 const PLAIN_VALUE_STATES = { allow: 'grant', deny: 'deny', unset: 'reset' } as const;
 
+/**
+ * iOS-only granular values. Android has no always/in-use/limited distinction at
+ * grant time, and its backend rejects `location-always` and any permission mode,
+ * so these are refused on Android with UNSUPPORTED_OPERATION rather than failing
+ * halfway through the backend after the adapter accepted them.
+ */
 const GRANULAR_MUTATIONS: Record<string, Record<string, MaestroPermissionMutation>> = {
   location: {
     always: { state: 'grant', permission: 'location-always' },
@@ -117,7 +128,16 @@ function mapMaestroPermission(
     );
   }
   const granular = GRANULAR_MUTATIONS[name]?.[value];
-  if (granular) return granular;
+  if (granular) {
+    if (platform !== 'ios') {
+      throw new AppError(
+        'UNSUPPORTED_OPERATION',
+        `Maestro permission "${name}" value "${value}" is iOS-only.`,
+        { hint: 'Use allow|deny|unset on Android.' },
+      );
+    }
+    return granular;
+  }
   const state = PLAIN_VALUE_STATES[value as keyof typeof PLAIN_VALUE_STATES];
   if (state) return { state, permission: name };
   throw new AppError('INVALID_ARGS', `Maestro permission "${name}" does not accept "${value}".`, {

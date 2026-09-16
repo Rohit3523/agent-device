@@ -447,6 +447,52 @@ test('setAndroidSetting permission grant contacts fails when none of its ids are
   );
 });
 
+// Deny and reset intersect like grant does: on a READ-only contacts app only
+// READ is revoked, so a fake that fails WRITE proves it was never attempted —
+// the path `all: deny` plus a named override depends on.
+test.each(['deny', 'reset'] as const)(
+  'setAndroidSetting permission %s contacts revokes only the declared READ id',
+  async (action) => {
+    const requested = dumpsysWithRequestedIds(['android.permission.READ_CONTACTS']);
+    await withFakeAdb(
+      fakeAdb((flat) => {
+        if (flat === CURRENT_USER) return '0';
+        if (flat === DUMPSYS) return requested;
+        if (flat === 'shell pm revoke --user 0 com.example.app android.permission.WRITE_CONTACTS') {
+          return {
+            stderr:
+              'SecurityException: Package com.example.app has not requested permission android.permission.WRITE_CONTACTS',
+            exitCode: 1,
+          };
+        }
+        return undefined;
+      }),
+      async ({ calls, device }) => {
+        const result = (await setAndroidSetting(device, 'permission', action, 'com.example.app', {
+          permissionTarget: 'contacts',
+        })) as Record<string, unknown>;
+        assert.equal(result.permission, 'android.permission.READ_CONTACTS');
+        const flat = calls.map((args) => args.join(' '));
+        assert.ok(
+          flat.includes(
+            'shell pm revoke --user 0 com.example.app android.permission.READ_CONTACTS',
+          ),
+          flat.join('; '),
+        );
+        assert.ok(!flat.some((call) => call.includes('WRITE_CONTACTS')), flat.join('; '));
+        if (action === 'reset') {
+          assert.ok(
+            flat.includes(
+              'shell pm clear-permission-flags --user 0 com.example.app android.permission.READ_CONTACTS user-set',
+            ),
+            flat.join('; '),
+          );
+        }
+      },
+    );
+  },
+);
+
 /** A dump shaped like the lab app's: install, custom, and runtime permissions side by side. */
 function dumpsysWithRequested(): string {
   return [

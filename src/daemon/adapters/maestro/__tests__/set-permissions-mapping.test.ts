@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'vitest';
+import { MAESTRO_PERMISSION_VALUES } from '@agent-device/maestro';
+import { parseAndroidPermissionTarget } from '@agent-device/platform-android/mechanics';
 import { mapMaestroSetPermissions } from '../set-permissions-mapping.ts';
 
 describe('mapMaestroSetPermissions', () => {
@@ -98,5 +100,57 @@ describe('mapMaestroSetPermissions', () => {
       () => mapMaestroSetPermissions({ camera: 'always' }, 'ios'),
       /camera.*does not accept.*always/i,
     );
+    // contacts-limited and location-always are `settings permission` target
+    // names, not Maestro names: the Maestro spellings are photos: limited
+    // and location: always.
+    for (const name of ['contacts-limited', 'location-always']) {
+      assert.throws(
+        () => mapMaestroSetPermissions({ [name]: 'allow' }, 'ios'),
+        new RegExp(`${name}.*not supported on ios`, 'i'),
+      );
+    }
+  });
+
+  test('refuses iOS granular values on Android', () => {
+    for (const [name, value] of [
+      ['location', 'always'],
+      ['location', 'inuse'],
+      ['location', 'never'],
+      ['photos', 'limited'],
+    ] as const) {
+      assert.throws(() => mapMaestroSetPermissions({ [name]: value }, 'android'), /iOS-only/i);
+    }
+  });
+
+  test('every mutation emitted for Android passes the Android parser', () => {
+    // Pins the adapter to mutations the backend serves: a value the adapter
+    // accepts must never fail halfway through `settings permission`.
+    const names = [
+      'all',
+      'camera',
+      'microphone',
+      'photos',
+      'contacts',
+      'notifications',
+      'calendar',
+      'location',
+      'media-library',
+      'contacts-limited',
+      'location-always',
+      'health',
+    ];
+    for (const name of names) {
+      for (const value of MAESTRO_PERMISSION_VALUES) {
+        let mutations;
+        try {
+          mutations = mapMaestroSetPermissions({ [name]: value }, 'android');
+        } catch {
+          continue;
+        }
+        for (const mutation of mutations) {
+          parseAndroidPermissionTarget(mutation.permission, mutation.mode);
+        }
+      }
+    }
   });
 });

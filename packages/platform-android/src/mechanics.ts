@@ -237,7 +237,11 @@ export {
   annotateAndroidNativePerfError,
   buildAndroidNativeToolUnavailableHint,
 } from './perf-native-errors.ts';
-export { androidRevokedPermissionWarning, setAndroidPermission } from './settings-permission.ts';
+export {
+  androidRevokedPermissionWarning,
+  parseAndroidPermissionTarget,
+  setAndroidPermission,
+} from './settings-permission.ts';
 export { setAndroidSetting } from './settings.ts';
 export {
   androidCaptureFailureReasonDetail,
