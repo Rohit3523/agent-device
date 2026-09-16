@@ -6,6 +6,15 @@
  * the root composition module.
  */
 export {
+  androidAdbHostTarget,
+  androidAdbInvocation,
+  androidAdbSerialTarget,
+  lowerAndroidAdbInvocation,
+  parseAndroidAdbArgv,
+  serializeAndroidAdbInvocation,
+  type AndroidAdbInvocation,
+} from './adb-transport.ts';
+export {
   androidAdbResultError,
   attachAdbFailureHint,
   classifyAdbFailure,

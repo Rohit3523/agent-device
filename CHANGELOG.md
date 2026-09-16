@@ -5,6 +5,19 @@
 - Added (maestro): `setPermissions` and `launchApp.permissions` support `all: allow|deny|unset`
   on iOS simulators and Android, with specific entries overriding `all`. Both accept a
   Maestro-style permissions map.
+- Fixed (daemon): `close` now stops an active app-log stream (and audio probe / perf capture /
+  recording) on an implicitly cwd-scoped session. Teardown addressed those resources by
+  `session.name` (`default`) instead of the store address (`cwd:<hash>:default`), so the record
+  read as missing, the `log stream` child leaked, and the next `logs start` on that device failed
+  with "has not reached a confirmed terminal state" (#2647).
+- Added (limrun): `longpress` on Limrun iOS direct sessions. The interactor refused it as
+  unsupported although the SDK exposes the HID primitives; it now holds one touch as a
+  `performActions` batch of `touchDown`, `wait`, `touchUp`, defaulting to the 800 ms the Android
+  and Linux interactors use when no duration is given.
+- Fixed (limrun): `press --double-tap` on Limrun iOS direct sessions sends both taps in one
+  `performActions` batch with an 80 ms on-device pause. The interactor issued two independent `tap`
+  requests, so a network round trip sat between the taps and iOS recognized them as two slow
+  single taps.
 - Added (ios): `type` and `fill` work in the Apple Pay sheet on iOS Simulator instead of failing
   with `TEXT_INPUT_NOT_FOCUSED`. `com.apple.PassbookUIService` is served in place like the web
   sign-in host (#2438).
@@ -16,6 +29,16 @@
   shows that sheet (hosted out of the app process)." to "This snapshot shows a system web sign-in
   sheet presented over the app (hosted out of the app process), not app content". The payment host
   says "the system Apple Pay sheet" instead.
+- Changed (android): a private adb server no longer absorbs a port its caller named. An adb request
+  that names a server other than the one its route holds — `-P 5037` in argv, or `serverPort` in the
+  call's options — is now refused with `managed-device-transport-mismatch` before anything is
+  dispatched, where previously a `-P` in argv was rewritten onto the route's own port. A caller that
+  asked for 5037 could read a zero exit as an answer about 5037 after the request had run on 15038.
+  It reaches `createLocalAndroidAdbProvider(device, { serverPort })`,
+  `runAndroidHostAdb(invocation, { serverPort })`, and the Limrun runtime dependency's adb calls. A
+  request that names no server, or names the one the route already holds, runs exactly as before, and
+  ambient adb is unchanged: with no private server named, the caller's argv is what runs, `-P`
+  included (#2632).
 - Fixed (android): a chunked `record stop` (recordings over 170 s) no longer warns that screenrecord
   stopped before record stop at the 180 s limit. Rotation always ends every earlier chunk before
   stop, so the warning now fires only when the last chunk's recorder had already exited.

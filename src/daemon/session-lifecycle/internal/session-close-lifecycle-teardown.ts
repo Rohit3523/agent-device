@@ -1,7 +1,7 @@
 import type { CloseApplicationFinalizationResult } from '@agent-device/contracts/application-lifecycle-runtime';
 import type { TargetShutdownResult } from '@agent-device/contracts/device';
 import type { DaemonRequest } from '../../daemon-request.ts';
-import type { SessionState } from '../../session-state.ts';
+import type { SessionRef, SessionState } from '../../session-state.ts';
 import { SessionStore } from '../../session-store.ts';
 import { cleanupRetainedMaterializedPathsForSession } from '../../materialized-path-registry.ts';
 import {
@@ -86,7 +86,7 @@ export async function runSessionCloseTeardown(params: {
   });
   const configuredRuntimeHints = sessionStore.getRuntimeHints(sessionName);
   await stopBestEffortSessionResources(
-    session,
+    { address: sessionName, session },
     sessionStore,
     attemptCleanup,
     params.platformResourceCleanup,
@@ -129,30 +129,25 @@ export async function runSessionCloseTeardown(params: {
 type CleanupRunner = (step: string, run: () => Promise<void>) => Promise<void>;
 
 async function stopBestEffortSessionResources(
-  session: SessionState,
+  ref: SessionRef,
   sessionStore: SessionStore,
   attemptCleanup: CleanupRunner,
   platformCleanup: PlatformResourceCleanup,
 ): Promise<void> {
-  // Recording overlay finalization needs the Apple runner.
-  const currentSession = sessionStore.get(session.name) ?? session;
-  if (currentSession.screenRecording) {
-    await attemptCleanup('recording', () =>
-      finishSessionScreenRecording({
-        session: currentSession,
-        sessionName: session.name,
-        sessionStore,
-      }),
-    );
-  }
-  await attemptCleanup('app_log', () =>
-    stopSessionAppLog({ session, sessionName: session.name, sessionStore }),
+  const { address: sessionName, session } = ref;
+  // Recording overlay finalization needs the Apple runner, so it runs first.
+  // `finishSessionScreenRecording` re-reads the stored session by address and
+  // returns when there is no recording; a second lookup here would only be a
+  // place to mis-address it.
+  await attemptCleanup('recording', () =>
+    finishSessionScreenRecording({ session, sessionName, sessionStore }),
   );
+  await attemptCleanup('app_log', () => stopSessionAppLog({ session, sessionName, sessionStore }));
   await attemptCleanup('audio_probe', () =>
-    finishSessionAudioProbe({ session, sessionName: session.name, sessionStore }),
+    finishSessionAudioProbe({ session, sessionName, sessionStore }),
   );
   await attemptCleanup('perf_capture', () =>
-    stopSessionPerfCapture({ session, sessionName: session.name, sessionStore }),
+    stopSessionPerfCapture({ session, sessionName, sessionStore }),
   );
   await attemptCleanup('platform_snapshot_helper', () =>
     stopSessionSnapshotHelper(session, platformCleanup),

@@ -4,7 +4,12 @@ import '../platform-runtime-android-adb-host.ts';
 // ProviderDeviceRuntime.getInteractor is synchronous, so this factory is the deliberate static edge;
 // making it lazy would require a proxy interactor rather than this seam.
 import { createAndroidInteractor } from '../core/interactors/android.ts';
-import { runAndroidHostAdb } from '@agent-device/platform-android/mechanics';
+import {
+  androidAdbHostTarget,
+  androidAdbInvocation,
+  androidAdbSerialTarget,
+  runAndroidHostAdb,
+} from '@agent-device/platform-android/mechanics';
 import { execFailureDetails, runCmd } from '@agent-device/host-kit/command';
 import { readVersion } from '@agent-device/host-kit/version';
 
@@ -57,14 +62,24 @@ export function createLimrunRuntimeDependencies(): LimrunRuntimeDependencies {
           timeoutMs: 5_000,
         });
       },
-      adbError: async (message, result, details) => {
+      deviceAdbInvocation: (serial, command) =>
+        androidAdbInvocation(androidAdbSerialTarget(serial), command),
+      hostAdbInvocation: (command) => androidAdbInvocation(androidAdbHostTarget(), command),
+      adbError: async (message, result, invocation) => {
         // Error construction is async so the platform helper remains lazy until an ADB failure.
-        const { androidAdbResultError } = await import('@agent-device/platform-android/mechanics');
-        return androidAdbResultError(message, result, details);
+        const { androidAdbResultError, serializeAndroidAdbInvocation } =
+          await import('@agent-device/platform-android/mechanics');
+        return androidAdbResultError(
+          message,
+          result,
+          invocation
+            ? { command: `adb ${serializeAndroidAdbInvocation(invocation).join(' ')}` }
+            : undefined,
+        );
       },
     },
     host: {
-      runAdb: async (args, options) => await runAndroidHostAdb(args, options),
+      runAdb: async (invocation, options) => await runAndroidHostAdb(invocation, options),
       archiveDirectory: async ({ sourceDirectory, entryName, archivePath }) => {
         const args = ['-qr', archivePath, entryName];
         const result = await runCmd('zip', args, {
