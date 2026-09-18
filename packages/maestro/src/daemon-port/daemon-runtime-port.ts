@@ -12,10 +12,7 @@ import { registerDiagnosticSensitiveValue } from '@agent-device/host-kit/diagnos
 import { AppError } from '@agent-device/kernel/errors';
 import { stripUndefined } from '@agent-device/kernel/record';
 import { executeRunScriptFile } from './run-script-execution.ts';
-import {
-  mapMaestroSetPermissions,
-  type MaestroPermissionMutation,
-} from './set-permissions-mapping.ts';
+import type { MaestroPermissionMutation } from './set-permissions-mapping.ts';
 import { waitForMaestroAnimationToEnd } from './wait-for-animation-to-end.ts';
 import {
   observeTypedMaestroCondition,
@@ -167,6 +164,9 @@ function createDaemonMaestroRuntimeParts(options: CreateDaemonMaestroRuntimeOper
       const clearState = input.clearState === true;
       const relaunch = !clearState && input.stopApp !== false;
       if (input.permissions) {
+        // Lazy so the daemon-port entry stays within its eager-closure budget:
+        // set-permissions-mapping pulls contracts/settings, only needed here.
+        const { mapMaestroSetPermissions } = await import('./set-permissions-mapping.ts');
         const mutations = mapMaestroSetPermissions(input.permissions, platform);
         if (clearState) {
           await invokeMutation({ kind: 'clearState', ...(appId ? { appId } : {}) }, context);
@@ -190,6 +190,7 @@ function createDaemonMaestroRuntimeParts(options: CreateDaemonMaestroRuntimeOper
       await invokeMutation({ kind: 'stopApp', ...(appId ? { appId } : {}) }, context);
     },
     setPermissions: async (input, context) => {
+      const { mapMaestroSetPermissions } = await import('./set-permissions-mapping.ts');
       await applyPermissionMutations(
         input.appId ?? context.appId,
         mapMaestroSetPermissions(input.permissions, platform),
