@@ -1,6 +1,6 @@
 {
   "name": "agent-device",
-  "version": "0.21.5",
+  "version": "0.21.6",
   "description": "Mobile app automation and verification for AI coding agents. CLI, MCP server, and typed Node.js API for iOS, Android, HarmonyOS, TV, web, macOS, and Linux.",
   "mcpName": "io.github.callstack/agent-device",
   "license": "MIT",
@@ -183,7 +183,7 @@
     "test-app:maestro:android": "pnpm test-app:maestro --platform android",
     "test": "pnpm test:unit",
     "test:unit": "vitest run --project unit-core --project fuzz-worker",
-    "test:maestro-compat": "vitest run --project unit-core packages/maestro src/daemon/adapters/maestro src/compat/__tests__/replay-input.test.ts",
+    "test:maestro-compat": "vitest run --project unit-core packages/maestro src/compat/__tests__/replay-input.test.ts",
     "test:coverage": "vitest run --coverage --project=!fuzz-worker && pnpm test:fuzz-worker",
     "test:coverage:ci": "vitest run --coverage --project=!fuzz-worker && pnpm test:fuzz-worker",
     "test:fuzz-worker": "vitest run --project fuzz-worker",

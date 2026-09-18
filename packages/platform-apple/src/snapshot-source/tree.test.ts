@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
+import { SnapshotSourceError } from './errors.ts';
 import { decodeSnapshotBridgeTree } from './tree.ts';
 import type { SnapshotSourceLimits } from './types.ts';
 
@@ -17,6 +18,7 @@ const frame = 'XC_kAXXCAttributeFrame';
 const children = 'XC_kAXXCAttributeChildren';
 const label = 'XC_kAXXCAttributeLabel';
 const automationType = 'XC_kAXXCAttributeAutomationType';
+const traits = 'XC_kAXXCAttributeTraits';
 
 test('the bridge tree becomes one depth-first raw snapshot with viewport evidence', () => {
   const result = decodeSnapshotBridgeTree(
@@ -142,6 +144,50 @@ test('the bridge tree counts web-hosted remote leaves that reach the viewport', 
     0,
     'a crossed boundary is not opaque',
   );
+});
+
+test('the bridge tree reads enabled from the NotEnabled trait', () => {
+  const button = (word?: unknown) => ({
+    [automationType]: 9,
+    [label]: 'Place order',
+    [frame]: { X: 20, Y: 700, Width: 120, Height: 48 },
+    ...(word === undefined ? {} : { [traits]: word }),
+    [children]: [],
+  });
+  const decode = (word?: unknown) =>
+    decodeSnapshotBridgeTree(
+      { [application]: 'Application', [children]: [button(word)] },
+      { truncated: false },
+      limits,
+    ).nodes[1];
+
+  const buttonTrait = 1n;
+  const notEnabledTrait = 1n << 8n;
+  const toggleButtonTrait = 1n << 53n;
+  const privateHighTrait = 1n << 60n;
+  const word = (traits: bigint) => traits.toString();
+  assert.equal(decode(word(buttonTrait))?.enabled, true);
+  assert.equal(decode(word(buttonTrait | notEnabledTrait))?.enabled, false);
+  assert.equal(decode(word(0n))?.enabled, true);
+  assert.equal(decode(word(toggleButtonTrait))?.enabled, true, 'a switch reads past 2^53');
+  assert.equal(
+    decode(word(toggleButtonTrait | notEnabledTrait))?.enabled,
+    false,
+    'a disabled switch',
+  );
+  assert.equal(
+    decode(word(privateHighTrait | notEnabledTrait))?.enabled,
+    false,
+    'a word past double precision keeps bit 8',
+  );
+  assert.equal(decode(word(privateHighTrait | 255n))?.enabled, true, 'no carry into bit 8');
+  assert.equal(decode()?.enabled, undefined, 'no traits word leaves enabled unknown');
+  const traitsInvalid = (error: unknown) =>
+    error instanceof SnapshotSourceError && error.failureCode === 'traits-invalid';
+  assert.throws(() => decode(256), traitsInvalid);
+  assert.throws(() => decode('1.5'), traitsInvalid);
+  assert.throws(() => decode('-1'), traitsInvalid);
+  assert.throws(() => decode(''), traitsInvalid);
 });
 
 test('the bridge tree rejects unknown fields, invalid frames, and bounded overflows', () => {

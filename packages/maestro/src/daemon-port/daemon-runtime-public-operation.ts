@@ -3,7 +3,7 @@ import type {
   MaestroDispatchSelector,
   MaestroSinglePointerGestureInput,
 } from '@agent-device/maestro';
-import type { DaemonRequest } from '../../daemon-request.ts';
+import type { GestureExecutionProfile } from '@agent-device/contracts/gesture-plan-types';
 import type { Point, Rect } from '@agent-device/kernel/snapshot';
 
 export type MaestroClickOptions = Pick<
@@ -44,15 +44,40 @@ export type MaestroPublicOperation =
   | { kind: 'snapshot' }
   | { kind: 'gestureViewport' };
 
-export type ProjectedMaestroPublicOperation = Pick<DaemonRequest, 'command' | 'positionals'> & {
+/**
+ * What a projected operation asks of the daemon beyond its public command: the daemon translates
+ * each option into its own request-private vocabulary before dispatch. Nothing here names live
+ * session state, which is what lets the port live outside the daemon.
+ */
+export type MaestroDaemonDispatchOptions = Readonly<{
+  /** Terminate the targeted app without ending the owning daemon session. */
+  closeAppOnly?: true;
+  /** A hierarchy capture used as operational evidence only; it issues no client ref authority. */
+  observationOnly?: true;
+  /** Provider-owned viewport already resolved for a nested gesture command. */
+  gestureViewport?: Rect;
+  /** Execution profile for timed coordinate swipes projected to `gesture pan`. */
+  gestureExecutionProfile?: GestureExecutionProfile;
+  /** Maestro `setPermissions` app targeting; the settings handler prefers it over the session app. */
+  settingsAppBundleId?: string;
+}>;
+
+/**
+ * One public daemon command the port asks the daemon to run on the replay's behalf. The daemon
+ * owns the rest of the request (token, session, metadata, runtime hints) and folds `dispatch`
+ * into its request-private half; the port never sees either.
+ */
+export type MaestroDaemonOperationRequest = {
+  command: string;
+  positionals: string[];
   input?: Record<string, unknown>;
-  flags?: Partial<CommandFlags>;
-  internal?: DaemonRequest['internal'];
+  flags?: CommandFlags;
+  dispatch?: MaestroDaemonDispatchOptions;
 };
 
 export function projectMaestroPublicOperation(
   operation: MaestroPublicOperation,
-): ProjectedMaestroPublicOperation {
+): MaestroDaemonOperationRequest {
   if (operation.kind === 'clearState') return projectClearState(operation);
   if (isAppOperation(operation)) return projectAppOperation(operation);
   if (isCaptureOperation(operation)) return projectCaptureOperation(operation);
@@ -71,7 +96,7 @@ function isAppOperation(operation: MaestroPublicOperation): operation is Maestro
   );
 }
 
-function projectAppOperation(operation: MaestroAppOperation): ProjectedMaestroPublicOperation {
+function projectAppOperation(operation: MaestroAppOperation): MaestroDaemonOperationRequest {
   switch (operation.kind) {
     case 'launchApp':
       return projectLaunchApp(operation);
@@ -84,7 +109,7 @@ function projectAppOperation(operation: MaestroAppOperation): ProjectedMaestroPu
 
 function projectLaunchApp(
   operation: Extract<MaestroAppOperation, { kind: 'launchApp' }>,
-): ProjectedMaestroPublicOperation {
+): MaestroDaemonOperationRequest {
   return {
     command: 'open',
     positionals: operation.appId ? [operation.appId] : [],
@@ -98,17 +123,17 @@ function projectLaunchApp(
 
 function projectStopApp(
   operation: Extract<MaestroAppOperation, { kind: 'stopApp' }>,
-): ProjectedMaestroPublicOperation {
+): MaestroDaemonOperationRequest {
   return {
     command: 'close',
     positionals: operation.appId ? [operation.appId] : [],
-    internal: { closeAppOnly: true },
+    dispatch: { closeAppOnly: true },
   };
 }
 
 function projectClearState(
   operation: Extract<MaestroPublicOperation, { kind: 'clearState' }>,
-): ProjectedMaestroPublicOperation {
+): MaestroDaemonOperationRequest {
   return {
     command: 'settings',
     positionals: operation.appId ? ['clear-app-state', operation.appId] : ['clear-app-state'],
@@ -117,7 +142,7 @@ function projectClearState(
 
 function projectOpenLink(
   operation: Extract<MaestroAppOperation, { kind: 'openLink' }>,
-): ProjectedMaestroPublicOperation {
+): MaestroDaemonOperationRequest {
   return {
     command: 'open',
     positionals: operation.appId ? [operation.appId, operation.link] : [operation.link],
@@ -127,7 +152,7 @@ function projectOpenLink(
 
 function projectSettingsPermission(
   operation: Extract<MaestroPublicOperation, { kind: 'settingsPermission' }>,
-): ProjectedMaestroPublicOperation {
+): MaestroDaemonOperationRequest {
   return {
     command: 'settings',
     positionals: [
@@ -136,7 +161,7 @@ function projectSettingsPermission(
       operation.permission,
       ...(operation.mode ? [operation.mode] : []),
     ],
-    ...(operation.appId ? { internal: { settingsAppBundleId: operation.appId } } : {}),
+    ...(operation.appId ? { dispatch: { settingsAppBundleId: operation.appId } } : {}),
   };
 }
 
@@ -148,7 +173,7 @@ type MaestroInputOperation = Exclude<
   | { kind: 'clearState' }
 >;
 
-function projectInputOperation(operation: MaestroInputOperation): ProjectedMaestroPublicOperation {
+function projectInputOperation(operation: MaestroInputOperation): MaestroDaemonOperationRequest {
   switch (operation.kind) {
     case 'gestureViewport':
       return { command: 'runtime', positionals: ['gesture-viewport'] };
@@ -169,7 +194,7 @@ function projectInputOperation(operation: MaestroInputOperation): ProjectedMaest
 
 function projectSelectorClick(
   operation: Extract<MaestroInputOperation, { kind: 'clickSelector' }>,
-): ProjectedMaestroPublicOperation {
+): MaestroDaemonOperationRequest {
   return {
     command: 'click',
     positionals: [`${operation.selector.key}=${JSON.stringify(operation.selector.value)}`],
@@ -185,7 +210,7 @@ function projectSelectorClick(
 
 function projectPointClick(
   operation: Extract<MaestroInputOperation, { kind: 'clickPoint' }>,
-): ProjectedMaestroPublicOperation {
+): MaestroDaemonOperationRequest {
   return {
     command: 'click',
     positionals: [String(operation.point.x), String(operation.point.y)],
@@ -197,7 +222,7 @@ function projectPointClick(
 
 function projectSwipe(
   operation: Extract<MaestroInputOperation, { kind: 'swipe' }>,
-): ProjectedMaestroPublicOperation {
+): MaestroDaemonOperationRequest {
   const { from, to, durationMs } = operation.gesture;
   return {
     command: 'gesture',
@@ -209,7 +234,7 @@ function projectSwipe(
       durationMs,
     },
     flags: { postGestureStabilization: false },
-    internal: {
+    dispatch: {
       gestureExecutionProfile: 'endpoint-hold',
       ...(operation.viewport ? { gestureViewport: operation.viewport } : {}),
     },
@@ -218,7 +243,7 @@ function projectSwipe(
 
 function projectScroll(
   operation: Extract<MaestroInputOperation, { kind: 'scroll' }>,
-): ProjectedMaestroPublicOperation {
+): MaestroDaemonOperationRequest {
   return {
     command: 'scroll',
     positionals: [operation.direction],
@@ -231,7 +256,7 @@ function projectScroll(
 
 function projectPressKey(
   operation: Extract<MaestroInputOperation, { kind: 'pressKey' }>,
-): ProjectedMaestroPublicOperation {
+): MaestroDaemonOperationRequest {
   if (operation.key === 'back' || operation.key === 'home') {
     return { command: operation.key, positionals: [] };
   }
@@ -248,7 +273,7 @@ function isCaptureOperation(
 
 function projectCaptureOperation(
   operation: MaestroCaptureOperation,
-): ProjectedMaestroPublicOperation {
+): MaestroDaemonOperationRequest {
   switch (operation.kind) {
     case 'screenshot':
       return {
@@ -270,6 +295,7 @@ function projectCaptureOperation(
         command: 'snapshot',
         positionals: [],
         flags: { noRecord: true },
+        dispatch: { observationOnly: true },
       };
   }
 }

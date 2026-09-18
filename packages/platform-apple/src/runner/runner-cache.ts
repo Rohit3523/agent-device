@@ -5,7 +5,7 @@ import {
   emitDiagnostic,
   readProcessStartTime,
   acquireProcessLock,
-  type ProcessLockOwner,
+  withProcessLock,
   isEnvTruthy,
   findProjectRoot,
 } from './host.ts';
@@ -101,47 +101,34 @@ export async function markRunnerXctestrunArtifactBadForRun(
   }
 
   badRunnerArtifactsForRun.add(artifact.derived);
-  const releaseCacheLock = await acquireRunnerXctestrunCacheLock(artifact.derived);
-  try {
-    emitRunnerXctestrunDecision('clean', 'bad_artifact', {
-      derived: artifact.derived,
-      xctestrunPath: artifact.xctestrunPath,
-      reason,
-    });
-    assertSafeDerivedCleanup(artifact.derived);
-    cleanRunnerDerivedArtifacts(artifact.derived);
-  } finally {
-    await releaseCacheLock();
-  }
+  await withProcessLock({
+    acquire: () => acquireRunnerXctestrunCacheLock(artifact.derived),
+    task: async () => {
+      emitRunnerXctestrunDecision('clean', 'bad_artifact', {
+        derived: artifact.derived,
+        xctestrunPath: artifact.xctestrunPath,
+        reason,
+      });
+      assertSafeDerivedCleanup(artifact.derived);
+      cleanRunnerDerivedArtifacts(artifact.derived);
+    },
+  });
 }
 
 export async function acquireRunnerXctestrunCacheLock(
   derived: string,
 ): Promise<() => Promise<void>> {
-  return await acquireRunnerCacheProcessLock({
+  return await acquireProcessLock({
     lockDirPath: resolveRunnerXctestrunCacheLockPath(derived),
     owner: {
       pid: process.pid,
       startTime: readProcessStartTime(process.pid),
       acquiredAtMs: Date.now(),
     },
-    description: 'iOS runner cache lock',
-  });
-}
-
-async function acquireRunnerCacheProcessLock(params: {
-  lockDirPath: string;
-  owner: ProcessLockOwner;
-  timeoutMs?: number;
-  description?: string;
-}): Promise<() => Promise<void>> {
-  return await acquireProcessLock({
-    lockDirPath: params.lockDirPath,
-    owner: params.owner,
-    timeoutMs: params.timeoutMs ?? RUNNER_XCTESTRUN_CACHE_LOCK_TIMEOUT_MS,
+    timeoutMs: RUNNER_XCTESTRUN_CACHE_LOCK_TIMEOUT_MS,
     pollMs: RUNNER_XCTESTRUN_CACHE_LOCK_POLL_MS,
     ownerGraceMs: RUNNER_XCTESTRUN_CACHE_LOCK_OWNER_GRACE_MS,
-    description: params.description ?? 'iOS runner cache lock',
+    description: 'iOS runner cache lock',
   });
 }
 

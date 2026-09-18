@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { expect, test } from 'vitest';
-import type { DaemonRequest } from '../../../daemon-request.ts';
+import type { MaestroDaemonOperationRequest } from '../daemon-runtime-public-operation.ts';
 import { createDaemonMaestroRuntimePort } from '../daemon-runtime-port.ts';
-import { makeBaseRequest, makeDependencies } from './daemon-runtime-port-fixtures.ts';
+import { makeDependencies, makeRuntimeEnvelope } from './daemon-runtime-port-fixtures.ts';
 
-function makePort(requests: DaemonRequest[], platform: 'ios' | 'android') {
+function makePort(requests: MaestroDaemonOperationRequest[], platform: 'ios' | 'android') {
   return createDaemonMaestroRuntimePort({
-    baseReq: makeBaseRequest({ flags: { platform, replayBackend: 'maestro' } }),
+    ...makeRuntimeEnvelope({ flags: { platform, replayBackend: 'maestro' } }),
     invoke: async (request) => {
       requests.push(request);
       return { ok: true, data: {} };
@@ -17,7 +17,7 @@ function makePort(requests: DaemonRequest[], platform: 'ios' | 'android') {
 }
 
 test('setPermissions sends all as one backend call with specifics after it', async () => {
-  const requests: DaemonRequest[] = [];
+  const requests: MaestroDaemonOperationRequest[] = [];
   const port = makePort(requests, 'android');
 
   await port.execute({
@@ -38,15 +38,15 @@ test('setPermissions sends all as one backend call with specifics after it', asy
     ['permission', 'reset', 'notifications'],
   ]);
   expect(
-    requests.every(({ internal }) => internal?.settingsAppBundleId === 'com.example.app'),
+    requests.every(({ dispatch }) => dispatch?.settingsAppBundleId === 'com.example.app'),
   ).toBe(true);
 });
 
 test('a mid-sequence backend rejection names what already landed', async () => {
-  const requests: DaemonRequest[] = [];
+  const requests: MaestroDaemonOperationRequest[] = [];
   let calls = 0;
   const port = createDaemonMaestroRuntimePort({
-    baseReq: makeBaseRequest({ flags: { platform: 'android', replayBackend: 'maestro' } }),
+    ...makeRuntimeEnvelope({ flags: { platform: 'android', replayBackend: 'maestro' } }),
     invoke: async (request) => {
       requests.push(request);
       calls += 1;
@@ -96,7 +96,7 @@ test('a mid-sequence backend rejection names what already landed', async () => {
 });
 
 test('launchApp applies permissions after clearing but before launch', async () => {
-  const requests: DaemonRequest[] = [];
+  const requests: MaestroDaemonOperationRequest[] = [];
   const port = makePort(requests, 'android');
 
   await port.execute({
@@ -116,13 +116,13 @@ test('launchApp applies permissions after clearing but before launch', async () 
   expect(requests.map(({ command }) => command)).toEqual(['settings', 'settings', 'open']);
   expect(requests[0]?.positionals).toEqual(['clear-app-state', 'com.example.app']);
   expect(requests[1]?.positionals).toEqual(['permission', 'grant', 'camera']);
-  expect(requests[1]?.internal?.settingsAppBundleId).toBe('com.example.app');
+  expect(requests[1]?.dispatch?.settingsAppBundleId).toBe('com.example.app');
   expect(requests[2]?.command).toBe('open');
   expect(requests[2]?.flags).not.toMatchObject({ clearAppState: true });
 });
 
 test('launchApp without clearState applies permissions before launch', async () => {
-  const requests: DaemonRequest[] = [];
+  const requests: MaestroDaemonOperationRequest[] = [];
   const port = makePort(requests, 'android');
 
   await port.execute({
@@ -144,7 +144,7 @@ test('launchApp without clearState applies permissions before launch', async () 
 });
 
 test('launchApp with rejected permissions launches nothing', async () => {
-  const requests: DaemonRequest[] = [];
+  const requests: MaestroDaemonOperationRequest[] = [];
   const port = makePort(requests, 'android');
 
   await expect(
@@ -166,7 +166,7 @@ test('launchApp with rejected permissions launches nothing', async () => {
 });
 
 test('setPermissions without an appId leaves targeting to the session app', async () => {
-  const requests: DaemonRequest[] = [];
+  const requests: MaestroDaemonOperationRequest[] = [];
   const port = makePort(requests, 'ios');
 
   await port.execute({
@@ -183,5 +183,5 @@ test('setPermissions without an appId leaves targeting to the session app', asyn
   expect(requests.map(({ positionals }) => positionals)).toEqual([
     ['permission', 'grant', 'location-always'],
   ]);
-  expect(requests[0]).not.toHaveProperty('internal');
+  expect(requests[0]).not.toHaveProperty('dispatch');
 });

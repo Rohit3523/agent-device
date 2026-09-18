@@ -42,6 +42,10 @@ import {
 } from './daemon-runtime-tap.ts';
 
 export type { CreateDaemonMaestroRuntimeOperationsOptions } from './daemon-runtime-port-support.ts';
+export type {
+  MaestroDaemonDispatchOptions,
+  MaestroDaemonOperationRequest,
+} from './daemon-runtime-public-operation.ts';
 
 function describePermissionMutation(mutation: MaestroPermissionMutation): string {
   return `${mutation.state} ${mutation.permission}${mutation.mode ? ` ${mutation.mode}` : ''}`;
@@ -342,7 +346,7 @@ function createDaemonMaestroRuntimeParts(options: CreateDaemonMaestroRuntimeOper
     runScript: async (input, context) => ({
       outputEnv: executeRunScriptFile({
         scriptPath: resolveScriptPath(input.file, context, options.sourcePath),
-        publicNetworkOnly: options.baseReq.internal?.publicNetworkOnly === true,
+        publicNetworkOnly: options.publicNetworkOnly,
         env: {
           ...context.env,
           ...(input.env ? stringifyEnvironment(input.env) : {}),

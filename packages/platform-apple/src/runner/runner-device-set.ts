@@ -8,7 +8,8 @@ import {
   emitDiagnostic,
   readProcessStartTime,
   acquireProcessLock,
-  type ProcessLockOwner,
+  withProcessLock,
+  type ProcessLockRelease,
 } from './host.ts';
 
 const XCTEST_DEVICE_SET_BASE_NAME = 'XCTestDevices';
@@ -18,17 +19,25 @@ const XCTEST_DEVICE_SET_LOCK_TIMEOUT_MS = 30_000;
 const XCTEST_DEVICE_SET_LOCK_POLL_MS = 100;
 const XCTEST_DEVICE_SET_LOCK_OWNER_GRACE_MS = 5_000;
 
-type XcodebuildSimulatorSetRedirectHandle = {
+export type XcodebuildSimulatorSetRedirectHandle = {
+  /**
+   * Runs the ordered give-back — restore the host's device set, then release the lock — and reports
+   * both failures, throwing the restore failure when there is one and the release failure otherwise.
+   */
   release: () => Promise<void>;
+  /**
+   * The same ordered give-back for a caller whose own outcome is already decided — a launch that
+   * failed, a teardown that ran. A release that cannot verify ownership is dropped rather than
+   * thrown: that claim is spent, and the next reclaim from this process reads it as dead. A failure
+   * to restore the host's own `XCTestDevices` outranks it and is thrown all the same.
+   */
+  releaseBestEffort: () => Promise<void>;
 };
 
 type XcodebuildSimulatorSetRedirectOptions = {
   xctestDeviceSetPath?: string;
   backupPath?: string;
   lockDirPath?: string;
-  ownerPid?: number;
-  ownerStartTime?: string | null;
-  nowMs?: number;
 };
 
 export function resolveXcodebuildSimulatorDeviceSetPath(homeDir: string = os.homedir()): string {
@@ -43,6 +52,22 @@ function resolveXcodebuildSimulatorDeviceSetBackupPath(
   xctestDeviceSetPath: string = resolveXcodebuildSimulatorDeviceSetPath(),
 ): string {
   return `${xctestDeviceSetPath}${XCTEST_DEVICE_SET_BACKUP_SUFFIX}`;
+}
+
+/**
+ * Runs `task` with the XCTest device set redirected at this simulator's device set, and gives the
+ * redirect back on every path out. The task is what owns the redirect's lifetime here, so a build
+ * that failed keeps its own error and the lock it could not hand back goes to the stale-clear path
+ * instead of becoming the reportable failure.
+ */
+export async function withXcodebuildSimulatorSetRedirect<Task>(
+  device: DeviceInfo,
+  task: () => Promise<Task>,
+  options: XcodebuildSimulatorSetRedirectOptions = {},
+): Promise<Task> {
+  const redirect = await acquireXcodebuildSimulatorSetRedirect(device, options);
+  if (!redirect) return await task();
+  return await withProcessLock({ acquire: async () => redirect.release, task });
 }
 
 export async function acquireXcodebuildSimulatorSetRedirect(
@@ -66,65 +91,191 @@ export async function acquireXcodebuildSimulatorSetRedirect(
   const lockDirPath = path.resolve(
     options.lockDirPath ?? resolveXcodebuildSimulatorDeviceSetLockPath(),
   );
-  const ownerStartTime = options.ownerStartTime ?? readProcessStartTime(process.pid);
-  const releaseLock = await acquireXcodebuildSimulatorSetLock({
+  const releaseLock = await acquireProcessLock({
     lockDirPath,
     owner: {
-      pid: options.ownerPid ?? process.pid,
-      startTime: ownerStartTime,
-      acquiredAtMs: options.nowMs ?? Date.now(),
+      pid: process.pid,
+      startTime: readProcessStartTime(process.pid),
+      acquiredAtMs: Date.now(),
     },
+    timeoutMs: XCTEST_DEVICE_SET_LOCK_TIMEOUT_MS,
+    pollMs: XCTEST_DEVICE_SET_LOCK_POLL_MS,
+    ownerGraceMs: XCTEST_DEVICE_SET_LOCK_OWNER_GRACE_MS,
+    description: 'XCTest device set lock',
   });
 
-  try {
-    reconcileXcodebuildSimulatorSetRedirect({
-      xctestDeviceSetPath,
-      backupPath,
-    });
-    if (sameResolvedPath(requestedSetPath, xctestDeviceSetPath)) {
-      await releaseLock();
-      return null;
-    }
+  const paths = { xctestDeviceSetPath, backupPath };
+  let needsRedirect = false;
 
-    fs.mkdirSync(requestedSetPath, { recursive: true });
-    if (fs.existsSync(xctestDeviceSetPath)) {
-      fs.renameSync(xctestDeviceSetPath, backupPath);
+  // One try, so the lock cannot be given back and then worked under: the restore of an interrupted
+  // build's leftovers runs first because the same-set check follows symlinks, and `XCTestDevices` left
+  // pointing into this simulator's requested set would otherwise read as "already redirected" and hand
+  // the next build the host's own devices.
+  try {
+    reconcileXcodebuildSimulatorSetRedirect(paths);
+    needsRedirect = !sameResolvedPath(requestedSetPath, xctestDeviceSetPath);
+    if (needsRedirect) {
+      installDeviceSetRedirect(paths, requestedSetPath);
     }
-    installXcodebuildSimulatorSetSymlink({
-      requestedSetPath,
-      xctestDeviceSetPath,
-    });
   } catch (error) {
-    reconcileXcodebuildSimulatorSetRedirect({
-      xctestDeviceSetPath,
-      backupPath,
-    });
-    await releaseLock();
-    throw new AppError('COMMAND_FAILED', 'Failed to redirect XCTest device set path', {
-      requestedSetPath,
-      xctestDeviceSetPath,
-      backupPath,
-      error: String(error),
-    });
+    // Anything the hand-back could not undo travels with this report; the lock never outlives the
+    // failure that ends the acquire.
+    const handBack = await handBackDeviceSet(paths, lockDirPath, releaseLock);
+    throw redirectFailure(error, handBack, { requestedSetPath, ...paths });
   }
 
-  let released = false;
-  return {
-    release: async () => {
-      if (released) {
-        return;
-      }
-      released = true;
-      try {
-        reconcileXcodebuildSimulatorSetRedirect({
-          xctestDeviceSetPath,
-          backupPath,
-        });
-      } finally {
-        await releaseLock();
-      }
-    },
+  if (!needsRedirect) {
+    // Nothing is displaced and the caller gets no handle: a lock this simulator never needed must not
+    // arrive as a redirect problem, and a host device set that could not be put back still must.
+    const handBack = await handBackDeviceSet(paths, lockDirPath, releaseLock);
+    if (handBack.restoreFailure !== null) {
+      throw handBack.restoreFailure;
+    }
+    return null;
+  }
+
+  let givenBack = false;
+  const giveBack = async (reportUnverifiedRelease: boolean): Promise<void> => {
+    if (givenBack) {
+      return;
+    }
+    givenBack = true;
+    const handBack = await handBackDeviceSet(paths, lockDirPath, releaseLock);
+    if (handBack.restoreFailure !== null) {
+      throw handBack.restoreFailure;
+    }
+    if (handBack.releaseFailure !== null && reportUnverifiedRelease) {
+      throw handBack.releaseFailure;
+    }
   };
+  return {
+    release: () => giveBack(true),
+    releaseBestEffort: () => giveBack(false),
+  };
+}
+
+/** The two paths a redirect moves around: where the host keeps its set, and where this run put it. */
+type DeviceSetPaths = {
+  xctestDeviceSetPath: string;
+  backupPath: string;
+};
+
+/** The rename that gives this simulator the host's slot, and the symlink that occupies it. */
+function installDeviceSetRedirect(paths: DeviceSetPaths, requestedSetPath: string): void {
+  fs.mkdirSync(requestedSetPath, { recursive: true });
+  if (fs.existsSync(paths.xctestDeviceSetPath)) {
+    fs.renameSync(paths.xctestDeviceSetPath, paths.backupPath);
+  }
+  installXcodebuildSimulatorSetSymlink({
+    requestedSetPath,
+    xctestDeviceSetPath: paths.xctestDeviceSetPath,
+  });
+}
+
+/**
+ * Why this redirect did not happen, plus whatever the hand-back could not put right on the way out. A
+ * backup path is named only when that backup is really on disk: a reader sent to restore a path that
+ * does not exist learns the wrong lesson from this error.
+ */
+function redirectFailure(
+  cause: unknown,
+  handBack: DeviceSetHandBack,
+  paths: DeviceSetPaths & { requestedSetPath: string },
+): AppError {
+  return new AppError('COMMAND_FAILED', 'Failed to redirect XCTest device set path', {
+    ...paths,
+    error: String(cause),
+    ...(handBack.restoreFailure === null ? {} : { restoreError: String(handBack.restoreFailure) }),
+    ...(handBack.renamedAsidePath === null
+      ? {}
+      : {
+          hint:
+            `The host's own device set is still renamed aside at ${handBack.renamedAsidePath}: ` +
+            'restore it, or remove that path, before another runner build redirects it.',
+        }),
+  });
+}
+
+/** What one ordered hand-back found, with neither failure able to hide the other. */
+type DeviceSetHandBack = {
+  /** The host's own `XCTestDevices` could not be put back, so a symlink or nothing is in its place. */
+  restoreFailure: unknown;
+  /** The path the host's own set is waiting at when a restore left it renamed aside, else null. */
+  renamedAsidePath: string | null;
+  /** The lock could not be given back, or could not be verified as ours when it was. */
+  releaseFailure: unknown;
+};
+
+/**
+ * The one ordered hand-back, used by every path that leaves this redirect behind: restore the host's
+ * own device set, then release the lock, and record whatever the release could not do. Neither step can
+ * hide the other, because a restore that could not run is a fact about this machine that outlives the
+ * request — every later `simctl` run sees the wrong devices — and the lock going back is what keeps the
+ * next acquire from waiting on a claim nobody is acting on. Which of the two a caller *hears* stays with
+ * the caller: a redirect that failed reports both, and one that merely ended reports the restore.
+ */
+async function handBackDeviceSet(
+  paths: DeviceSetPaths,
+  lockDirPath: string,
+  releaseLock: ProcessLockRelease,
+): Promise<DeviceSetHandBack> {
+  let restoreFailure: unknown = null;
+  let renamedAsidePath: string | null = null;
+  let releaseFailure: unknown = null;
+  try {
+    // Idempotent, so an exit that already reconciled on its way to this decision pays only a look.
+    reconcileXcodebuildSimulatorSetRedirect(paths);
+  } catch (error) {
+    restoreFailure = error;
+    // Observed here, while the lock is still held and the release has not moved anything.
+    renamedAsidePath = findDeviceSetBackup(paths);
+  }
+  try {
+    await releaseLock();
+  } catch (error) {
+    releaseFailure = error;
+  }
+  recordReleaseFailure(releaseFailure, lockDirPath);
+  return { restoreFailure, renamedAsidePath, releaseFailure };
+}
+
+/**
+ * Where the host's own device set sits when it is not in place: the backup this run would have written,
+ * or the older name an earlier version used, but only while it is really on disk. Once the host's set is
+ * back at its own path nothing is renamed aside, and naming a leftover backup would point a reader at a
+ * copy they could restore over the set in use.
+ */
+function findDeviceSetBackup(paths: DeviceSetPaths): string | null {
+  const { xctestDeviceSetPath, backupPath } = paths;
+  if (!isSymlink(xctestDeviceSetPath) && fs.existsSync(xctestDeviceSetPath)) {
+    // The host's own set is back where it belongs. Any backup still on disk is a leftover of an older
+    // interruption, and sending a reader to copy it back would overwrite the set that is in place.
+    return null;
+  }
+  return (
+    [backupPath, ...findLegacyXcodebuildSimulatorSetBackups(backupPath)].find((candidate) =>
+      fs.existsSync(candidate),
+    ) ?? null
+  );
+}
+
+/**
+ * Records a lock release that no caller is being made to throw. A release whose ownership could not be
+ * verified is already recorded where the claim lives, so only the rest reaches the log.
+ */
+function recordReleaseFailure(error: unknown, lockDirPath: string): void {
+  if (error === null || isOwnerReleaseUnverified(error)) {
+    return;
+  }
+  emitDiagnostic({
+    level: 'warn',
+    phase: 'ios_runner_xctest_device_set_hand_back_failed',
+    data: { lockDirPath, error: String(error) },
+  });
+}
+
+function isOwnerReleaseUnverified(error: unknown): boolean {
+  return error instanceof AppError && error.details?.ownerReleaseUnverified === true;
 }
 
 // fallow-ignore-next-line complexity
@@ -238,21 +389,4 @@ function sameResolvedPath(left: string, right: string): boolean {
   } catch {
     return false;
   }
-}
-
-async function acquireXcodebuildSimulatorSetLock(params: {
-  lockDirPath: string;
-  owner: ProcessLockOwner;
-  timeoutMs?: number;
-  pollMs?: number;
-  description?: string;
-}): Promise<() => Promise<void>> {
-  return await acquireProcessLock({
-    lockDirPath: params.lockDirPath,
-    owner: params.owner,
-    timeoutMs: params.timeoutMs ?? XCTEST_DEVICE_SET_LOCK_TIMEOUT_MS,
-    pollMs: params.pollMs ?? XCTEST_DEVICE_SET_LOCK_POLL_MS,
-    ownerGraceMs: XCTEST_DEVICE_SET_LOCK_OWNER_GRACE_MS,
-    description: params.description ?? 'XCTest device set lock',
-  });
 }
