@@ -4,9 +4,18 @@
 
 - Added (maestro): `setPermissions` and `launchApp.permissions` support `all: allow|deny|unset`
   on iOS simulators and Android, with specific entries overriding `all`. Both accept a
-  Maestro-style permissions map. iOS `all` does not cover notifications: simctl has no
-  notifications service on these runtimes, so targeted notifications fails loudly and `all`
-  leaves it unchanged.
+  Maestro-style permissions map. Entries apply in order until the selected platform refuses one,
+  and the error then names what landed. Android's only allow level is while-in-use, so
+  `location: inuse|never` apply `allow`/`deny` there; `location: always` and `photos: limited`
+  stay Apple-only.
+- Fixed (ios): `settings permission` no longer refuses a privacy service that `simctl privacy`
+  accepts but omits from its own help text — Xcode 26 does that for `camera`, so
+  `settings permission grant camera` and a Maestro `camera: allow` failed as unsupported while
+  the raw command worked. Support is now `simctl privacy`'s own verdict per runtime, and a
+  service it refuses fails with `UNSUPPORTED_OPERATION`. This also drops the cached
+  `simctl privacy help` probe and the `privacy help` spawn before the first permission change.
+  iOS `all` still does not cover notifications: current runtimes have no notifications service,
+  so a targeted notifications change fails loudly and `all` leaves it unchanged.
 - Fixed (daemon): `close` now stops an active app-log stream (and audio probe / perf capture /
   recording) on an implicitly cwd-scoped session. Teardown addressed those resources by
   `session.name` (`default`) instead of the store address (`cwd:<hash>:default`), so the record

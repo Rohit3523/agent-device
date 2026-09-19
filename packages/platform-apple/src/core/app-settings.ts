@@ -8,9 +8,7 @@ import {
 import { isIosFamily, isMacOs, type DeviceInfo } from '@agent-device/kernel/device';
 import { AppError } from '@agent-device/kernel/errors';
 import { readHostDirectory, removeHostPath } from '@agent-device/host-kit/host-file';
-import { readHostEnvironmentVariable } from '@agent-device/host-kit/process';
 import path from 'node:path';
-import { resolveIosSimulatorDeviceSetPath } from '@agent-device/kernel/device-isolation';
 import { requireExecSuccess } from '@agent-device/host-kit/command';
 import { requireLocationCoordinates } from '@agent-device/kernel/location-coordinates';
 import {
@@ -30,9 +28,6 @@ import {
 } from './screenshot-status-bar.ts';
 import { ensureBootedSimulator, requireSimulatorDevice } from './simulator.ts';
 import { runXcrun } from './tool-provider.ts';
-
-let cachedSimctlPrivacyServices: Set<string> | null = null;
-let cachedSimctlPrivacyServicesCacheKey: string | undefined;
 
 // fallow-ignore-next-line complexity
 export async function setIosSetting(
@@ -272,104 +267,58 @@ async function runIosPrivacyCommand(
   target: string,
   appBundleId: string,
 ): Promise<void> {
-  const supportedServices = await getSimctlPrivacyServices(device);
-  if (!supportedServices.has(target)) {
-    throw new AppError(
-      'UNSUPPORTED_OPERATION',
-      `iOS simctl privacy does not support service "${target}" on this runtime.`,
-      {
-        deviceId: device.id,
-        appBundleId,
-        hint: `Supported services: ${Array.from(supportedServices).sort().join(', ')}`,
-      },
-    );
-  }
-
-  const args = ['privacy', device.id, action, target, appBundleId];
   try {
-    await runSimctl(device, args);
-    return;
+    await runSimctl(device, ['privacy', device.id, action, target, appBundleId]);
   } catch (error) {
-    if (!(target === 'notifications' && isNotificationsOperationNotPermitted(error))) {
-      throw error;
-    }
-    if (action === 'reset') {
-      throw new AppError(
-        'UNSUPPORTED_OPERATION',
-        'iOS simulator does not support resetting notifications permission via simctl privacy on this runtime.',
-        {
-          deviceId: device.id,
-          appBundleId,
-          hint: 'Use reinstall to force a fresh notifications prompt, or reset simulator content and settings.',
-        },
-      );
-    }
-    throw new AppError(
-      'UNSUPPORTED_OPERATION',
-      'iOS simulator does not support setting notifications permission via simctl privacy on this runtime.',
-      {
-        deviceId: device.id,
-        appBundleId,
-        hint: 'Use reset notifications for reprompt behavior, or toggle notifications manually in Settings.',
-      },
-    );
+    if (!isPrivacyServiceRefusedError(error)) throw error;
+    throw privacyServiceRefusedError(device, action, target, appBundleId, error);
   }
 }
 
-function isNotificationsOperationNotPermitted(error: unknown): boolean {
+/**
+ * `simctl privacy` is its own capability check: a service the runtime cannot change answers
+ * EPERM, whether or not it is spelled in the help text. The help text is not a capability
+ * list — Xcode 26 omits `camera`, which it does change — so the verdict is read from the
+ * command that would have made the change rather than from a probe that can only guess.
+ */
+function isPrivacyServiceRefusedError(error: unknown): boolean {
   if (!(error instanceof AppError) || error.code !== 'COMMAND_FAILED') return false;
   const stderr = String(error.details?.stderr ?? '').toLowerCase();
   return (
-    (stderr.includes('failed to grant access') ||
-      stderr.includes('failed to revoke access') ||
-      stderr.includes('failed to reset access')) &&
+    /failed to (set|grant|revoke|reset) access/.test(stderr) &&
     stderr.includes('operation not permitted')
   );
 }
 
-async function getSimctlPrivacyServices(device: DeviceInfo): Promise<Set<string>> {
-  const simulatorSetPath = resolveIosSimulatorDeviceSetPath(device.simulatorSetPath);
-  const currentCacheKey = `${readHostEnvironmentVariable('PATH') ?? ''}::${simulatorSetPath ?? ''}`;
-  if (cachedSimctlPrivacyServices && cachedSimctlPrivacyServicesCacheKey === currentCacheKey) {
-    return cachedSimctlPrivacyServices;
+function privacyServiceRefusedError(
+  device: DeviceInfo,
+  action: 'grant' | 'revoke' | 'reset',
+  target: string,
+  appBundleId: string,
+  cause: unknown,
+): AppError {
+  if (action === 'reset') {
+    return new AppError(
+      'UNSUPPORTED_OPERATION',
+      `iOS simulator does not support resetting ${target} permission via simctl privacy on this runtime.`,
+      {
+        deviceId: device.id,
+        appBundleId,
+        hint: 'Use reinstall to force a fresh prompt, or reset simulator content and settings.',
+      },
+      cause,
+    );
   }
-  const result = await runSimctl(device, ['privacy', 'help'], { allowFailure: true });
-  const services = parseSimctlPrivacyServices(`${result.stdout}\n${result.stderr}`);
-  if (services.size === 0) {
-    // exec-guard-allow: `simctl privacy help` prints usage to stderr and can
-    // exit non-zero while still listing services — the guard is on parse
-    // output, not the exit code.
-    throw new AppError('COMMAND_FAILED', 'Unable to determine supported simctl privacy services', {
-      stdout: result.stdout,
-      stderr: result.stderr,
-      exitCode: result.exitCode,
-      hint: 'Run `xcrun simctl privacy help` manually to verify available services for this runtime.',
-    });
-  }
-  cachedSimctlPrivacyServices = services;
-  cachedSimctlPrivacyServicesCacheKey = currentCacheKey;
-  return services;
-}
-
-function parseSimctlPrivacyServices(helpText: string): Set<string> {
-  const services = new Set<string>();
-  let inServiceSection = false;
-  for (const line of helpText.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    if (trimmed === 'service') {
-      inServiceSection = true;
-      continue;
-    }
-    if (!inServiceSection) continue;
-    if (trimmed.startsWith('bundle identifier')) break;
-    const match = /^([a-z-]+)\s+-\s+/.exec(trimmed);
-    const service = match?.[1];
-    if (service !== undefined) {
-      services.add(service);
-    }
-  }
-  return services;
+  return new AppError(
+    'UNSUPPORTED_OPERATION',
+    `iOS simulator does not support setting ${target} permission via simctl privacy on this runtime.`,
+    {
+      deviceId: device.id,
+      appBundleId,
+      hint: 'Privacy support varies by Xcode runtime: run `xcrun simctl privacy help` for its documented services, or use the `all` target, which applies the action to every service this runtime can change.',
+    },
+    cause,
+  );
 }
 
 /** The `simctl privacy` service for every target except `photos`, whose service depends on its mode. */

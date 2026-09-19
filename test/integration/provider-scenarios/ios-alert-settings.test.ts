@@ -78,18 +78,6 @@ test('Provider-backed integration iOS Settings permission and alert flow uses pr
       if (listDevices) {
         return listDevices;
       }
-      if (args.join(' ') === 'privacy help') {
-        return {
-          stdout: [
-            'service',
-            '  camera - Camera',
-            '  microphone - Microphone',
-            'bundle identifier',
-          ].join('\n'),
-          stderr: '',
-          exitCode: 0,
-        };
-      }
       if (args.join(' ') === 'help') {
         return { stdout: 'simctl help\n', stderr: '', exitCode: 0 };
       }

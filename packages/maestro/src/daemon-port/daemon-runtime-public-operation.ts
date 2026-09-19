@@ -180,7 +180,13 @@ const MAESTRO_PERMISSION_TARGETS: Readonly<Record<string, string>> = {
 
 const MAESTRO_PERMISSION_STATES = { allow: 'grant', deny: 'deny', unset: 'reset' } as const;
 
-/** Maestro's granular values, each already a complete mutation. */
+/**
+ * Maestro's granular values, each already a complete mutation. `inuse` and `never` are not
+ * Apple-only spellings to refuse elsewhere: `pm grant` leaves a location appop of `foreground`,
+ * which is Android's only allow level, so the plain target is the faithful Android reading of
+ * both. `always` and `limited` have no Android mutation to project onto and the Android backend
+ * refuses them.
+ */
 const MAESTRO_GRANULAR_PERMISSIONS: Readonly<
   Record<string, Readonly<Record<string, MaestroPermissionMutation>>>
 > = {

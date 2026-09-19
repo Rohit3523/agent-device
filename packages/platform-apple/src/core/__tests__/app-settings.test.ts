@@ -28,7 +28,6 @@ const simulatorActual = await vi.importActual<typeof import('../simulator.ts')>(
 import { setIosSetting } from '../app-settings.ts';
 import { withMockedMacOsHelper } from './macos-helper-test-utils.ts';
 import { ensureBootedSimulator } from '../simulator.ts';
-import type { DeviceInfo } from '@agent-device/kernel/device';
 import { AppError } from '@agent-device/kernel/errors';
 import { runCmd } from '@agent-device/host-kit/command';
 import { retryWithPolicy } from '@agent-device/host-kit/retry';
@@ -301,8 +300,6 @@ test('setIosSetting permission grant calendar uses simctl privacy calendar targe
   await withFakeAppleTool(
     (args) => {
       if (isSimctlListDevices(args)) return BOOTED_SIM_LIST_JSON;
-      // simctl privacy help falls through to the fake's canned service listing.
-      if (args[0] === 'simctl' && args[1] === 'privacy' && args[2] === 'help') return undefined;
       if (args.join(' ') === 'simctl privacy sim-1 grant calendar com.example.app') return '';
       return unexpectedArgs(args);
     },
@@ -417,7 +414,6 @@ test('setIosSetting permission grant photos limited maps to photos-add', async (
   await withFakeAppleTool(
     (args) => {
       if (isSimctlListDevices(args)) return BOOTED_SIM_LIST_JSON;
-      if (args[0] === 'simctl' && args[1] === 'privacy' && args[2] === 'help') return undefined;
       if (args.join(' ') === 'simctl privacy sim-1 grant photos-add com.example.app') return '';
       return unexpectedArgs(args);
     },
@@ -456,14 +452,12 @@ test('setIosSetting permission rejects mode for non-photos target', async () => 
 });
 
 test('setIosSetting permission reset notifications fails targeted when direct reset is blocked', async () => {
-  // A listed-but-blocked notifications service must not fall back to `reset
-  // all`: a notifications-only reset would clear microphone, location, and
-  // other grants. The targeted reset fails instead, leaving the earlier grant
-  // in place.
+  // A blocked notifications reset must not fall back to `reset all`: a
+  // notifications-only reset would clear microphone, location, and other
+  // grants. The targeted reset fails instead, leaving the earlier grant in place.
   await withFakeAppleTool(
     (args) => {
       if (isSimctlListDevices(args)) return BOOTED_SIM_LIST_JSON;
-      if (args[0] === 'simctl' && args[1] === 'privacy' && args[2] === 'help') return undefined;
       if (args.join(' ') === 'simctl privacy sim-1 grant microphone com.example.app') return '';
       if (args.join(' ') === 'simctl privacy sim-1 reset notifications com.example.app') {
         return { stderr: 'Failed to reset access\nOperation not permitted', exitCode: 1 };
@@ -504,47 +498,29 @@ test('setIosSetting permission reset notifications fails targeted when direct re
   );
 });
 
-test('setIosSetting permission reset notifications fails explicitly without touching other services', async () => {
-  // Runtimes like iOS 26.3 omit notifications from `simctl privacy help`, where
-  // no targeted reset exists: the probe gate rejects before any privacy call,
-  // so an earlier microphone grant survives the failed reset.
-  const device: DeviceInfo = {
-    ...IOS_TEST_SIMULATOR,
-    simulatorSetPath: '/fake/privacy-help-no-notifications',
-  };
-  const HELP_WITHOUT_NOTIFICATIONS = `Usage: simctl privacy <device> <action> <service> [<bundle identifier>]
-
-        service
-             The service:
-                 microphone - Allow access to audio input.`;
+test('setIosSetting permission grant camera needs no capability probe', async () => {
+  // Xcode 26 omits `camera` from `simctl privacy help` while still changing it, so a
+  // help-derived gate refused a service every runtime here serves. The privacy call is
+  // itself the probe, so nothing else may be issued for a grant.
   await withFakeAppleTool(
     (args) => {
       if (isSimctlListDevices(args)) return BOOTED_SIM_LIST_JSON;
-      if (args.includes('help')) return HELP_WITHOUT_NOTIFICATIONS;
-      const flat = args.join(' ');
-      if (flat.includes('grant microphone com.example.app')) return '';
+      if (args.join(' ') === 'simctl privacy sim-1 grant camera com.example.app') return '';
       return unexpectedArgs(args);
     },
     async ({ calls }) => {
-      await setIosSetting(device, 'permission', 'grant', 'com.example.app', {
-        permissionTarget: 'microphone',
+      await setIosSetting(IOS_TEST_SIMULATOR, 'permission', 'grant', 'com.example.app', {
+        permissionTarget: 'camera',
       });
-      await assertRejectsAppError(
-        () =>
-          setIosSetting(device, 'permission', 'reset', 'com.example.app', {
-            permissionTarget: 'notifications',
-          }),
-        { code: 'UNSUPPORTED_OPERATION', message: /does not support service "notifications"/i },
-      );
       const flat = calls.map((args) => args.join(' '));
       assert.equal(
-        flat.some((line) => line.includes('reset all com.example.app')),
-        false,
+        flat.includes('simctl privacy sim-1 grant camera com.example.app'),
+        true,
         flat.join('; '),
       );
       assert.equal(
-        flat.some((line) => line.includes('grant microphone com.example.app')),
-        true,
+        flat.some((line) => line.includes('privacy help')),
+        false,
         flat.join('; '),
       );
     },
@@ -555,7 +531,6 @@ test('setIosSetting permission deny notifications returns unsupported on runtime
   await withFakeAppleTool(
     (args) => {
       if (isSimctlListDevices(args)) return BOOTED_SIM_LIST_JSON;
-      if (args[0] === 'simctl' && args[1] === 'privacy' && args[2] === 'help') return undefined;
       if (args.join(' ') === 'simctl privacy sim-1 revoke notifications com.example.app') {
         return { stderr: 'Failed to revoke access\nOperation not permitted', exitCode: 1 };
       }
@@ -582,42 +557,32 @@ test('setIosSetting permission deny notifications returns unsupported on runtime
   );
 });
 
-test('setIosSetting permission rejects service missing from simctl privacy help', async () => {
-  // A distinct simulator set path busts the module-level privacy-services
-  // cache, whose key is `PATH + set path` — the PATH half no longer varies
-  // now that no PATH stubbing happens, so the set path must.
-  const device: DeviceInfo = { ...IOS_TEST_SIMULATOR, simulatorSetPath: '/fake/privacy-help-set' };
-  const CUSTOM_PRIVACY_HELP = `Usage: simctl privacy <device> <action> <service> [<bundle identifier>]
-
-        service
-             The service:
-                 camera - Allow access to camera.
-                 microphone - Allow access to audio input.`;
-
+test('setIosSetting permission reports a runtime-refused service as unsupported', async () => {
+  // A service the runtime cannot change answers EPERM, and Xcode 26 words grant/revoke
+  // failures as "Failed to set access" — not "failed to grant access" — for both a real
+  // service it withheld and a name it does not know at all.
   await withFakeAppleTool(
     (args) => {
       if (isSimctlListDevices(args)) return BOOTED_SIM_LIST_JSON;
-      if (args[0] === 'simctl' && args.includes('privacy') && args.includes('help')) {
-        return CUSTOM_PRIVACY_HELP;
+      if (args.join(' ') === 'simctl privacy sim-1 grant calendar com.example.app') {
+        return { stderr: 'Failed to set access\nOperation not permitted', exitCode: 1 };
       }
       return unexpectedArgs(args);
     },
     async ({ calls }) => {
       await assertRejectsAppError(
         () =>
-          setIosSetting(device, 'permission', 'grant', 'com.example.app', {
+          setIosSetting(IOS_TEST_SIMULATOR, 'permission', 'grant', 'com.example.app', {
             permissionTarget: 'calendar',
           }),
-        { code: 'UNSUPPORTED_OPERATION', message: /does not support service "calendar"/i },
+        {
+          code: 'UNSUPPORTED_OPERATION',
+          message: /does not support setting calendar permission/i,
+        },
       );
       const flat = calls.map((args) => args.join(' '));
       assert.equal(
         flat.some((line) => line.includes('privacy help')),
-        true,
-        flat.join('; '),
-      );
-      assert.equal(
-        flat.some((line) => line.includes('grant calendar')),
         false,
         flat.join('; '),
       );
