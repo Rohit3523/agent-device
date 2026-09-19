@@ -297,9 +297,9 @@ test.each([
 
 test.each([
   [
-    'mode outside photos',
-    { permissionTarget: 'camera', permissionMode: 'limited' },
-    /mode is only supported for photos/i,
+    'a permission mode',
+    { permissionTarget: 'photos', permissionMode: 'limited' },
+    /Android does not support permission modes/i,
   ],
   [
     'an iOS-only target',

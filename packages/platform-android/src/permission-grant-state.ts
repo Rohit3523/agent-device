@@ -20,25 +20,32 @@ export type AndroidPriorGrantState = 'granted' | 'not_granted' | 'unknown';
 export type AndroidRuntimePermissionGrants = ReadonlyMap<string, 'granted' | 'not_granted'>;
 
 /**
- * `userId`'s runtime permissions, or `undefined` when the state could not be read — adb failed,
- * or the dump carried no runtime-permission block for that user.
+ * The one `dumpsys package` read every permission path shares: the declared ids and `userId`'s
+ * runtime grants. A failed read answers with both halves undefined instead of throwing, and each
+ * caller applies its own policy: `all` refuses, named targets fall back to their fixed ids with
+ * `unknown` prior grants.
  *
  * The caller passes the user its mutation will target, so the two halves cannot disagree.
  * `dumpsys package` prints an `install permissions:` section and one block per user, all
  * carrying `granted=` lines; a scan that ignores that structure reports another profile's
  * grant — or an install permission that `pm revoke` cannot touch — as this user's.
  */
-export async function readAndroidRuntimePermissionGrants(
+export async function readAndroidPackagePermissions(
   device: DeviceInfo,
   appPackage: string,
   userId: number,
-): Promise<AndroidRuntimePermissionGrants | undefined> {
+): Promise<AndroidPackagePermissions> {
   const result = await runAndroidAdb(device, ['shell', 'dumpsys', 'package', appPackage], {
     allowFailure: true,
   });
-  if (result.exitCode !== 0) return undefined;
-  return parseAndroidRuntimePermissionGrants(result.stdout, userId);
+  if (result.exitCode !== 0) return { requested: undefined, grants: undefined };
+  return parseAndroidPackagePermissions(result.stdout, userId);
 }
+
+type AndroidPackagePermissions = {
+  requested: string[] | undefined;
+  grants: AndroidRuntimePermissionGrants | undefined;
+};
 
 /**
  * The foreground user, or `undefined` when it cannot be resolved.
@@ -135,10 +142,7 @@ function nestedBlock(
 export function parseAndroidPackagePermissions(
   dumpsysOutput: string,
   userId: number,
-): {
-  requested: string[] | undefined;
-  grants: AndroidRuntimePermissionGrants | undefined;
-} {
+): AndroidPackagePermissions {
   return {
     requested: parseAndroidRequestedPermissions(dumpsysOutput),
     grants: parseAndroidRuntimePermissionGrants(dumpsysOutput, userId),

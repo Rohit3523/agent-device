@@ -1,12 +1,8 @@
 import { describe, expect, expectTypeOf, test } from 'vitest';
 import {
-  ANDROID_PERMISSION_TARGETS,
   getUnsupportedMacOsSettingMessage,
-  IOS_PERMISSION_TARGETS,
   isMacOsSettingSupported,
   MACOS_PERMISSION_TARGETS,
-  MAESTRO_ANDROID_PERMISSION_TARGETS,
-  MAESTRO_IOS_PERMISSION_TARGETS,
   MOBILE_PERMISSION_TARGETS,
   parsePermissionAction,
   parsePermissionTarget,
@@ -91,47 +87,6 @@ describe('the declared permission vocabulary', () => {
     expect([...MACOS_PERMISSION_TARGETS]).toEqual([...MACOS_ONLY_TARGETS]);
     expect([...PERMISSION_ACTIONS]).toEqual(['grant', 'deny', 'reset']);
     expect([...PERMISSION_MODES]).toEqual(['full', 'limited']);
-  });
-
-  test('per-platform targets stay subsets of the accepted vocabulary', () => {
-    expect([...IOS_PERMISSION_TARGETS]).toEqual([...MOBILE_TARGETS]);
-    expect([...ANDROID_PERMISSION_TARGETS]).toEqual([
-      'all',
-      'camera',
-      'microphone',
-      'photos',
-      'contacts',
-      'notifications',
-      'calendar',
-      'location',
-      'media-library',
-    ]);
-    for (const target of ANDROID_PERMISSION_TARGETS) {
-      expect(MOBILE_TARGETS).toContain(target);
-    }
-  });
-
-  test('Maestro admission sets are explicit allowlists, not native denylists', () => {
-    expect([...MAESTRO_ANDROID_PERMISSION_TARGETS]).toEqual([...ANDROID_PERMISSION_TARGETS]);
-    expect([...MAESTRO_IOS_PERMISSION_TARGETS]).toEqual([
-      'all',
-      'camera',
-      'microphone',
-      'photos',
-      'contacts',
-      'notifications',
-      'calendar',
-      'location',
-      'media-library',
-      'motion',
-      'reminders',
-      'siri',
-    ]);
-    for (const target of MAESTRO_IOS_PERMISSION_TARGETS) {
-      expect(MOBILE_TARGETS).toContain(target);
-    }
-    expect(MAESTRO_IOS_PERMISSION_TARGETS).not.toContain('contacts-limited');
-    expect(MAESTRO_IOS_PERMISSION_TARGETS).not.toContain('location-always');
   });
 });
 

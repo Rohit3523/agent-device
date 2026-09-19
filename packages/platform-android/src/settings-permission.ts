@@ -1,8 +1,7 @@
 import { AppError } from '@agent-device/kernel/errors';
 import type { DeviceInfo } from '@agent-device/kernel/device';
 import {
-  ANDROID_PERMISSION_TARGETS,
-  type AndroidPermissionTarget as AndroidPermissionName,
+  type MobilePermissionTarget,
   parsePermissionAction,
   parsePermissionTarget,
   type SettingOptions,
@@ -10,9 +9,8 @@ import {
 import { runAndroidAdb } from './adb.ts';
 import { androidAdbResultError } from './adb-failure.ts';
 import {
-  parseAndroidPackagePermissions,
   readAndroidCurrentUserId,
-  readAndroidRuntimePermissionGrants,
+  readAndroidPackagePermissions,
   type AndroidPriorGrantState,
   type AndroidRuntimePermissionGrants,
 } from './permission-grant-state.ts';
@@ -43,15 +41,27 @@ export function androidRevokedPermissionWarning(
 
 type AndroidPermissionTarget = ReturnType<typeof parseAndroidPermissionTarget>;
 
+/** The targets Android serves, in the order its refusal lists them. */
+const ANDROID_PERMISSION_TARGETS = [
+  'all',
+  'camera',
+  'microphone',
+  'photos',
+  'contacts',
+  'notifications',
+  'calendar',
+  'location',
+  'media-library',
+] as const satisfies readonly MobilePermissionTarget[];
+
+type AndroidPermissionName = (typeof ANDROID_PERMISSION_TARGETS)[number];
+
 /**
- * Canonical Maestro/Android names to the `pm` permission ids they fan out to.
- * Keyed off `ANDROID_PERMISSION_TARGETS` so the table cannot advertise a name
- * the contracts vocabulary — and therefore the Maestro adapter and the hint
- * text — does not know: `photos` (SDK-dependent probing) and `notifications`
- * (appops) keep their dedicated kinds, `all` resolves against the package
- * instead. `contacts`/`location`/`calendar` fan out to several ids; the named
- * path intersects those with the package's declared permissions (like `all`
- * does) so an app declaring only one id still succeeds.
+ * The `pm` permission ids each plain target fans out to. `photos` (SDK-dependent probing) and
+ * `notifications` (appops) keep their dedicated kinds, and `all` resolves against the package
+ * instead. `contacts`/`location`/`calendar` fan out to several ids; the named path intersects
+ * those with the package's declared permissions (like `all` does) so an app declaring only one
+ * id still succeeds.
  */
 const ANDROID_PERMISSION_TABLE: Record<
   Exclude<AndroidPermissionName, 'all' | 'photos' | 'notifications'>,
@@ -127,7 +137,7 @@ export async function setAndroidPermission(
   }
   // Read before the revoke — afterwards every permission reads as not granted — but resolved
   // after it, because `photos` only learns which permission it revoked by probing the device.
-  const grants = await readAndroidRuntimePermissionGrants(device, appPackage, userId);
+  const { grants } = await readAndroidPackagePermissions(device, appPackage, userId);
   const revoked = await revokeAndroidPermission(device, appPackage, action, target, userArgs);
   const states = revoked.map((permission) => grants?.get(permission) ?? 'unknown');
   const { priorGrantState, warnings } = summarizeRevokedPermissions(appPackage, revoked, states);
@@ -156,7 +166,7 @@ async function setAllAndroidPermissions(
   userId: number,
   userArgs: AndroidUserArgs,
 ): Promise<Record<string, unknown>> {
-  const { requested, grants: revokedGrants } = await readDeclaredPermissions(
+  const { requested, grants: revokedGrants } = await readAndroidPackagePermissions(
     device,
     appPackage,
     userId,
@@ -434,21 +444,13 @@ function parseAndroidPermissionTarget(
   | { kind: 'notifications'; appOps: string; permission: string }
   | { kind: 'all' } {
   const normalized = parsePermissionTarget(permissionTarget);
-  if (normalized === 'all') {
-    if (permissionMode?.trim()) {
-      throw new AppError(
-        'INVALID_ARGS',
-        `Permission mode is only supported for photos. Received: ${permissionMode}.`,
-      );
-    }
-    return { kind: 'all' };
-  }
   if (permissionMode?.trim()) {
     throw new AppError(
       'INVALID_ARGS',
-      `Permission mode is only supported for photos. Received: ${permissionMode}.`,
+      `Android does not support permission modes. Received: ${permissionMode}.`,
     );
   }
+  if (normalized === 'all') return { kind: 'all' };
   if (normalized === 'photos') return { kind: 'photos' };
   if (normalized === 'notifications') {
     return {
@@ -470,29 +472,6 @@ function parseAndroidPermissionTarget(
 }
 
 /**
- * The one `dumpsys package` read every permission path shares: the declared
- * ids plus the acting user's runtime grants. A failed or unparseable read
- * answers with undefined halves instead of throwing, and each caller applies
- * the one failure policy: `all` refuses (it has no table to fall back to),
- * while named targets fall back to the strict table with unknown grants — the
- * pinned `unknown` tri-state for revoke, and the pre-existing grant behavior.
- */
-async function readDeclaredPermissions(
-  device: DeviceInfo,
-  appPackage: string,
-  userId: number,
-): Promise<{
-  requested: string[] | undefined;
-  grants: AndroidRuntimePermissionGrants | undefined;
-}> {
-  const dump = await runAndroidAdb(device, ['shell', 'dumpsys', 'package', appPackage], {
-    allowFailure: true,
-  });
-  if (dump.exitCode !== 0) return { requested: undefined, grants: undefined };
-  return parseAndroidPackagePermissions(dump.stdout, userId);
-}
-
-/**
  * Intersect a named multi-id target with the package's declared permissions —
  * the same read `all` uses. `pm` throws "has not requested permission"
  * for any id the app does not declare, so attempting every id strictly fails
@@ -509,7 +488,7 @@ async function resolveNamedPmIds(
   values: readonly string[],
   userId: number,
 ): Promise<readonly string[]> {
-  const { requested } = await readDeclaredPermissions(device, appPackage, userId);
+  const { requested } = await readAndroidPackagePermissions(device, appPackage, userId);
   return filterNamedPmIds(requested, values, appPackage);
 }
 
@@ -539,7 +518,7 @@ async function revokeNamedPmTarget(
   userId: number,
   userArgs: AndroidUserArgs,
 ): Promise<Record<string, unknown>> {
-  const { requested, grants } = await readDeclaredPermissions(device, appPackage, userId);
+  const { requested, grants } = await readAndroidPackagePermissions(device, appPackage, userId);
   const values = filterNamedPmIds(requested, target.values, appPackage);
   await applyPmRevoke(device, appPackage, values, action, userArgs);
   const states = values.map((permission) => grants?.get(permission) ?? 'unknown');

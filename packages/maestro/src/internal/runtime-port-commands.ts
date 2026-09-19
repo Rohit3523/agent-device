@@ -1,6 +1,5 @@
 import { AppError } from '@agent-device/kernel/errors';
 import { pointInsideRect, stripUndefined } from './shared.ts';
-import { MAESTRO_PERMISSION_VALUES } from './program-ir-values.ts';
 import {
   maestroScrollDurationFromSpeed,
   MAESTRO_COMPATIBILITY_PRESETS,
@@ -189,19 +188,11 @@ function launchAppInput(command: MaestroCommandOf<'launchApp'>, request: Maestro
   });
 }
 
+/** Values are case-insensitive; a `${VAR}` value is checked where the permission is applied. */
 function resolveSetPermissions(permissions: Readonly<Record<string, string>>) {
-  const resolved: Record<string, string> = {};
-  for (const [name, value] of Object.entries(permissions)) {
-    const normalized = value.toLowerCase();
-    if (!MAESTRO_PERMISSION_VALUES.has(normalized)) {
-      throw new AppError(
-        'INVALID_ARGS',
-        `Maestro setPermissions.permissions.${name} expects allow|deny|unset (plus always|inuse|never|limited for location/photos); received "${value}".`,
-      );
-    }
-    resolved[name] = normalized;
-  }
-  return resolved;
+  return Object.fromEntries(
+    Object.entries(permissions).map(([name, value]) => [name, value.toLowerCase()]),
+  );
 }
 
 async function executeTargetCommand(

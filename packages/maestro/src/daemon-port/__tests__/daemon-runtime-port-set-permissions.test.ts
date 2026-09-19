@@ -161,7 +161,7 @@ test('launchApp with rejected permissions launches nothing', async () => {
       env: {},
       invalidateObservation() {},
     }),
-  ).rejects.toThrow(/health.*not supported on android/i);
+  ).rejects.toThrow(/health.*not supported/i);
   expect(requests).toEqual([]);
 });
 

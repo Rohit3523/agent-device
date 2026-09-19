@@ -37,59 +37,9 @@ export const MACOS_PERMISSION_TARGETS = [
   'input-monitoring',
 ] as const;
 
-/**
- * The names each mobile backend serves individually (`all` travels as one
- * backend call and resolves there). iOS serves the whole mobile vocabulary;
- * Android serves the subset below. Declared once so the Android table, the
- * Maestro adapter lists, and the hint text cannot drift from each other —
- * which is what left `bluetooth`/`phone`/`sms`/`storage` advertised but
- * unreachable.
- */
-export const IOS_PERMISSION_TARGETS = MOBILE_PERMISSION_TARGETS;
-
-export const ANDROID_PERMISSION_TARGETS = [
-  'all',
-  'camera',
-  'microphone',
-  'photos',
-  'contacts',
-  'notifications',
-  'calendar',
-  'location',
-  'media-library',
-] as const;
-
-/**
- * The Maestro `setPermissions` names each platform accepts. An explicit
- * allowlist on purpose: the native `settings permission` vocabulary may grow
- * a target Maestro never names (today `contacts-limited` and
- * `location-always`, whose Maestro spellings are `photos: limited` and
- * `location: always`), and that target must not become a Maestro name
- * without a deliberate decision here. The daemon adapter derives both its
- * admission set and its unsupported-name hint from these lists, so the two
- * cannot disagree.
- */
-export const MAESTRO_ANDROID_PERMISSION_TARGETS = ANDROID_PERMISSION_TARGETS;
-
-export const MAESTRO_IOS_PERMISSION_TARGETS = [
-  'all',
-  'camera',
-  'microphone',
-  'photos',
-  'contacts',
-  'notifications',
-  'calendar',
-  'location',
-  'media-library',
-  'motion',
-  'reminders',
-  'siri',
-] as const;
-
 export type PermissionAction = (typeof PERMISSION_ACTIONS)[number];
 export type PermissionMode = (typeof PERMISSION_MODES)[number];
 export type MobilePermissionTarget = (typeof MOBILE_PERMISSION_TARGETS)[number];
-export type AndroidPermissionTarget = (typeof ANDROID_PERMISSION_TARGETS)[number];
 /**
  * The app-scoped vocabulary `parsePermissionTarget` returns. The public client's `PermissionTarget`
  * in `client-settings.ts` is wider: it also names the macOS targets.

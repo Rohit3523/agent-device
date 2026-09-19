@@ -1,4 +1,5 @@
 import type { CommandFlags } from '@agent-device/contracts/command';
+import { AppError } from '@agent-device/kernel/errors';
 import type {
   MaestroDispatchSelector,
   MaestroSinglePointerGestureInput,
@@ -148,6 +149,89 @@ function projectOpenLink(
     positionals: operation.appId ? [operation.appId, operation.link] : [operation.link],
     ...(operation.prewarmRunner ? { flags: { maestro: { prewarmRunnerBeforeOpen: true } } } : {}),
   };
+}
+
+export type MaestroPermissionMutation = Readonly<
+  Pick<
+    Extract<MaestroPublicOperation, { kind: 'settingsPermission' }>,
+    'state' | 'permission' | 'mode'
+  >
+>;
+
+/**
+ * Maestro permission names and the `settings permission` target each projects onto. Which
+ * platform serves a target is the backend's answer, so an unserved target fails there with the
+ * backend's own hint; a name missing here is refused before anything is changed.
+ */
+const MAESTRO_PERMISSION_TARGETS: Readonly<Record<string, string>> = {
+  camera: 'camera',
+  microphone: 'microphone',
+  photos: 'photos',
+  contacts: 'contacts',
+  notifications: 'notifications',
+  calendar: 'calendar',
+  location: 'location',
+  medialibrary: 'media-library',
+  'media-library': 'media-library',
+  motion: 'motion',
+  reminders: 'reminders',
+  siri: 'siri',
+};
+
+const MAESTRO_PERMISSION_STATES = { allow: 'grant', deny: 'deny', unset: 'reset' } as const;
+
+/** Maestro's granular values, each already a complete mutation. */
+const MAESTRO_GRANULAR_PERMISSIONS: Readonly<
+  Record<string, Readonly<Record<string, MaestroPermissionMutation>>>
+> = {
+  location: {
+    always: { state: 'grant', permission: 'location-always' },
+    inuse: { state: 'grant', permission: 'location' },
+    never: { state: 'deny', permission: 'location' },
+  },
+  photos: { limited: { state: 'grant', permission: 'photos', mode: 'limited' } },
+};
+
+/**
+ * A Maestro `setPermissions` map as ordered `settings permission` mutations: `all` first, so the
+ * specific entries override it whatever the authored order. The whole map is checked before
+ * anything is returned, so a rejected map changes nothing.
+ */
+export function mapMaestroSetPermissions(
+  permissions: Readonly<Record<string, string>>,
+): MaestroPermissionMutation[] {
+  const entries = Object.entries(permissions).map(
+    ([name, value]) => [name.toLowerCase(), value] as const,
+  );
+  if (entries.length === 0) {
+    throw new AppError('INVALID_ARGS', 'Maestro setPermissions requires at least one permission.');
+  }
+  const ordered = [
+    ...entries.filter(([name]) => name === 'all'),
+    ...entries.filter(([name]) => name !== 'all'),
+  ];
+  return ordered.map(([name, value]) => mapMaestroPermission(name, value));
+}
+
+function mapMaestroPermission(name: string, value: string): MaestroPermissionMutation {
+  const permission = name === 'all' ? 'all' : ownValue(MAESTRO_PERMISSION_TARGETS, name);
+  if (permission === undefined) {
+    throw new AppError('UNSUPPORTED_OPERATION', `Maestro permission "${name}" is not supported.`, {
+      hint: `Supported: all, ${Object.keys(MAESTRO_PERMISSION_TARGETS).join(', ')}.`,
+    });
+  }
+  const granular = MAESTRO_GRANULAR_PERMISSIONS[name];
+  const granularMutation = granular ? ownValue(granular, value) : undefined;
+  if (granularMutation) return granularMutation;
+  const state = ownValue(MAESTRO_PERMISSION_STATES, value);
+  if (state) return { state, permission };
+  throw new AppError('INVALID_ARGS', `Maestro permission "${name}" does not accept "${value}".`, {
+    hint: `Use ${['allow', 'deny', 'unset', ...Object.keys(granular ?? {})].join('|')}.`,
+  });
+}
+
+function ownValue<T>(table: Readonly<Record<string, T>>, key: string): T | undefined {
+  return Object.hasOwn(table, key) ? table[key] : undefined;
 }
 
 function projectSettingsPermission(

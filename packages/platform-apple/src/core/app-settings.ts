@@ -1,6 +1,6 @@
 import {
   getUnsupportedMacOsSettingMessage,
-  IOS_PERMISSION_TARGETS,
+  type MobilePermissionTarget,
   parsePermissionAction,
   parsePermissionTarget,
   type SettingOptions,
@@ -372,41 +372,41 @@ function parseSimctlPrivacyServices(helpText: string): Set<string> {
   return services;
 }
 
-// fallow-ignore-next-line complexity
+/** The `simctl privacy` service for every target except `photos`, whose service depends on its mode. */
+const IOS_PRIVACY_SERVICES: Record<Exclude<MobilePermissionTarget, 'photos'>, string> = {
+  all: 'all',
+  camera: 'camera',
+  microphone: 'microphone',
+  contacts: 'contacts',
+  'contacts-limited': 'contacts-limited',
+  notifications: 'notifications',
+  calendar: 'calendar',
+  location: 'location',
+  'location-always': 'location-always',
+  'media-library': 'media-library',
+  motion: 'motion',
+  reminders: 'reminders',
+  siri: 'siri',
+};
+
 function parseIosPermissionTarget(
   permissionTarget: string | undefined,
   permissionMode: string | undefined,
 ): string {
   const normalized = parsePermissionTarget(permissionTarget);
-  if (normalized !== 'photos' && permissionMode?.trim()) {
-    throw new AppError(
-      'INVALID_ARGS',
-      `Permission mode is only supported for photos. Received: ${permissionMode}.`,
-    );
-  }
-  if (normalized === 'all') return 'all';
-  if (normalized === 'camera') return 'camera';
-  if (normalized === 'microphone') return 'microphone';
-  if (normalized === 'contacts') return 'contacts';
-  if (normalized === 'contacts-limited') return 'contacts-limited';
-  if (normalized === 'notifications') return 'notifications';
-  if (normalized === 'calendar') return 'calendar';
-  if (normalized === 'location') return 'location';
-  if (normalized === 'location-always') return 'location-always';
-  if (normalized === 'media-library') return 'media-library';
-  if (normalized === 'motion') return 'motion';
-  if (normalized === 'reminders') return 'reminders';
-  if (normalized === 'siri') return 'siri';
   if (normalized === 'photos') {
     const mode = permissionMode?.trim().toLowerCase();
     if (!mode || mode === 'full') return 'photos';
     if (mode === 'limited') return 'photos-add';
     throw new AppError('INVALID_ARGS', `Invalid photos mode: ${permissionMode}. Use full|limited.`);
   }
-  throw new AppError(
-    'INVALID_ARGS',
-    `Unsupported permission target: ${permissionTarget}. Use ${IOS_PERMISSION_TARGETS.join('|')}.`,
-  );
+  if (permissionMode?.trim()) {
+    throw new AppError(
+      'INVALID_ARGS',
+      `Permission mode is only supported for photos. Received: ${permissionMode}.`,
+    );
+  }
+  return IOS_PRIVACY_SERVICES[normalized];
 }
 
 function parseBiometricAction(state: string, settingName: IosBiometricSetting): IosBiometricAction {
