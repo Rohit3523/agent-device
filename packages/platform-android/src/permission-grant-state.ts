@@ -139,7 +139,7 @@ function nestedBlock(
  * see the two parsers — so callers can refuse on a missing section while
  * still answering `unknown` for missing grants.
  */
-export function parseAndroidPackagePermissions(
+function parseAndroidPackagePermissions(
   dumpsysOutput: string,
   userId: number,
 ): AndroidPackagePermissions {
