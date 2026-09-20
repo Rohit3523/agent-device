@@ -1,5 +1,6 @@
 import path from 'node:path';
-import type { DaemonOpenLifecycle, DaemonRequest, DaemonResponse } from '../../daemon-request.ts';
+import type { ReplayDispatchOptions } from '@agent-device/contracts/replay';
+import type { DaemonWireRequest } from '@agent-device/contracts/command';
 import { emitDiagnostic } from '@agent-device/host-kit/diagnostics';
 import { sleep } from '@agent-device/host-kit/retry';
 
@@ -13,13 +14,14 @@ import {
   defaultRecordingPath,
   recordingExtensionForPlatform,
 } from '@agent-device/capture-kit/recording-output-path';
+import { type DaemonResponse } from '@agent-device/kernel/contracts';
 
 const REPLAY_TEST_VIDEO_RECORDING_PREROLL_MS = 1_000;
 const REPLAY_TEST_VIDEO_RECORDING_TAIL_MS = 3_000;
 
 export function buildReplayTestVideoOpenLifecycle(
   params: ReplayTestVideoRecordingParams,
-): DaemonOpenLifecycle | undefined {
+): NonNullable<ReplayDispatchOptions['openLifecycle']> | undefined {
   if (params.req.flags?.recordVideo !== true) return undefined;
   return {
     beforeDispatch: async () => await startReplayTestVideoRecordingIfReady(params),
@@ -27,7 +29,7 @@ export function buildReplayTestVideoOpenLifecycle(
 }
 
 type ReplayTestVideoRecordingParams = {
-  req: DaemonRequest;
+  req: DaemonWireRequest;
   sessionName: string;
   sessionStore: ReplaySessionStore;
   artifactsDir: string | undefined;
@@ -135,7 +137,7 @@ function appendVideoTimingEvent(
 }
 
 type ReplayVideoRecordRequestParams = Readonly<{
-  req: DaemonRequest;
+  req: DaemonWireRequest;
   sessionName: string;
 }> &
   ({ phase: 'start'; outputPath: string } | { phase: 'stop' });

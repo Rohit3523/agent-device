@@ -231,6 +231,18 @@ const appSwitcherUnavailable = Object.freeze({
 } as const);
 
 /**
+ * Unlike its `appSwitcher` neighbour this is never a per-session capability question: no WebDriver
+ * `mobile:` script presses an iPhone Action Button, so the interactor refuses unconditionally and
+ * the fact refuses unconditionally to match. There is deliberately no capability key declared for
+ * it, which would advertise a button this provider can never press.
+ */
+const actionButtonUnavailable = Object.freeze({
+  available: false,
+  reason: 'unsupported-provider-mode',
+  hint: 'action-button presses iPhone Action Button hardware, which no WebDriver backend exposes.',
+} as const);
+
+/**
  * The WebDriver interactor's own `setSetting` always throws unsupported (its capability map
  * declares `settings: unsupported`), so this cell is unavailable unconditionally rather than
  * gated by interactor reachability — the same shape `tvRemote` takes.
@@ -521,6 +533,7 @@ function webDriverFacts(
       keyboard: inactiveSession,
       clipboard: inactiveSession,
       appSwitcher: inactiveSession,
+      actionButton: actionButtonUnavailable,
       triggerAppEvent: inactiveSession,
       setSetting: inactiveSession,
       readAlert: inactiveSession,
@@ -564,6 +577,7 @@ function webDriverFacts(
     keyboard: keyboardUnavailable,
     clipboard: clipboardUnavailable,
     appSwitcher: appSwitcherUnavailable,
+    actionButton: actionButtonUnavailable,
     triggerAppEvent: appEventUnavailable,
     setSetting: settingsUnavailable,
     readAlert: alertUnavailable,
@@ -658,6 +672,7 @@ function webDriverFacts(
       ...appSwitcherRuntimeOperationFacts({
         appSwitcher: declared('appSwitcher', appSwitcherUnavailable),
       }),
+      actionButton: actionButtonUnavailable,
       // The deep link opens through the same reachable interactor `open` every lifecycle command
       // drives on this provider.
       ...appEventRuntimeOperationFacts({

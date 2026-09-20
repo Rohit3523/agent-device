@@ -32,6 +32,7 @@ const BACK_COMMAND_NAME = 'back';
 const HOME_COMMAND_NAME = 'home';
 const ORIENTATION_COMMAND_NAME = 'orientation';
 const APP_SWITCHER_COMMAND_NAME = 'app-switcher';
+const ACTION_BUTTON_COMMAND_NAME = 'action-button';
 const KEYBOARD_COMMAND_NAME = 'keyboard';
 const CLIPBOARD_COMMAND_NAME = 'clipboard';
 const TV_REMOTE_COMMAND_NAME = 'tv-remote';
@@ -40,7 +41,8 @@ const TV_REMOTE_LONGPRESS_PRESET_MS = 500;
 const CLIPBOARD_ACTION_VALUES = ['read', 'write'] as const;
 const KEYBOARD_METADATA_ACTION_VALUES = ['status', 'dismiss', 'enter', 'return'] as const;
 
-const appStateCommandDescription = 'Show foreground app/activity';
+const appStateCommandDescription =
+  'Show foreground app/activity (Android; iOS answers per command)';
 const backCommandDescription =
   'Navigate back in the app or through system navigation. Use in-app for the app navigation stack and system when the platform back behavior is required.';
 const homeCommandDescription =
@@ -51,7 +53,9 @@ const appSwitcherCommandDescription =
 const keyboardCommandDescription =
   'Inspect Android keyboard visibility/type or press/dismiss the device keyboard. To hide the keyboard, use keyboard dismiss. It taps the keyboard dismiss/hide key when one is exposed, verifies the keyboard closed, and reports UNSUPPORTED_OPERATION when no dismiss key exists \u2014 background taps are never attempted.';
 const clipboardCommandDescription =
-  'Read the current device clipboard text, or replace its contents with the given text.';
+  'Read the current device clipboard text, or replace its contents with the given text. Android runs both through the clipboard service shell command, and a build that implements none (Android 16 does not) refuses with UNSUPPORTED_OPERATION rather than reporting an empty clipboard.';
+const actionButtonCommandDescription =
+  'Press the iPhone or iPad Action Button once. The press is dispatched without activating the session app and nothing is re-observed afterwards, so the app keeps the state the press found. What the system does with the press is not observed by this command: Simulators run no Shortcuts or App Intents, so delivery to an assigned Shortcut is verifiable only on a physical iPhone.';
 const tvRemoteCommandDescription =
   'Press or long-press a TV remote or D-pad button on Android TV, tvOS, or Vega OS. Choose the button and optional hold duration through the input fields. The aliases ok, center, and enter all map to select.';
 
@@ -86,6 +90,12 @@ const appSwitcherCommandMetadata = defineFieldCommandMetadata(
   {},
 );
 
+const actionButtonCommandMetadata = defineFieldCommandMetadata(
+  ACTION_BUTTON_COMMAND_NAME,
+  actionButtonCommandDescription,
+  {},
+);
+
 const keyboardCommandMetadata = defineFieldCommandMetadata(
   KEYBOARD_COMMAND_NAME,
   keyboardCommandDescription,
@@ -94,6 +104,7 @@ const keyboardCommandMetadata = defineFieldCommandMetadata(
   },
 );
 
+// `clipboard read` prints the clipboard content verbatim, so its warnings belong on stderr.
 const clipboardCommandMetadata = defineFieldCommandMetadata(
   CLIPBOARD_COMMAND_NAME,
   clipboardCommandDescription,
@@ -101,6 +112,7 @@ const clipboardCommandMetadata = defineFieldCommandMetadata(
     action: requiredField(enumField(CLIPBOARD_ACTION_VALUES)),
     text: stringField(),
   },
+  { parseableOutput: true },
 );
 
 const tvRemoteCommandMetadata = defineFieldCommandMetadata(
@@ -129,6 +141,8 @@ const homeCliSchema = {} as const satisfies CommandSchemaOverride;
 
 const appSwitcherCliSchema = {} as const satisfies CommandSchemaOverride;
 
+const actionButtonCliSchema = {} as const satisfies CommandSchemaOverride;
+
 const orientationCliSchema = {
   usageOverride: 'orientation <portrait|portrait-upside-down|landscape-left|landscape-right>',
   positionalArgs: ['orientation'],
@@ -156,6 +170,8 @@ const tvRemoteCliSchema = {
 export const appStateCliReader: CliReader = (_positionals, flags) => commonInputFromFlags(flags);
 export const homeCliReader: CliReader = (_positionals, flags) => commonInputFromFlags(flags);
 export const appSwitcherCliReader: CliReader = (_positionals, flags) => commonInputFromFlags(flags);
+export const actionButtonCliReader: CliReader = (_positionals, flags) =>
+  commonInputFromFlags(flags);
 
 export const backCliReader: CliReader = (_positionals, flags) => ({
   ...commonInputFromFlags(flags),
@@ -197,6 +213,8 @@ export const orientationDaemonWriter: DaemonWriter = direct(ORIENTATION_COMMAND_
 ]);
 
 export const appSwitcherDaemonWriter: DaemonWriter = direct(APP_SWITCHER_COMMAND_NAME);
+
+export const actionButtonDaemonWriter: DaemonWriter = direct(ACTION_BUTTON_COMMAND_NAME);
 
 export const keyboardDaemonWriter: DaemonWriter = direct(KEYBOARD_COMMAND_NAME, (input) =>
   optionalString(input.action),
@@ -301,6 +319,21 @@ const clipboardCommandFacet = defineCommandFacet({
   cliOutputFormatter: systemCliOutputFormatters.clipboard,
 });
 
+const actionButtonCommandFacet = defineCommandFacet({
+  name: ACTION_BUTTON_COMMAND_NAME,
+  text: {
+    summary: 'Press the iPhone or iPad Action Button',
+    cliDetail:
+      'iPhone and iPad only. The runner asks the device for the button and reports unsupported when that model has none.',
+  },
+  metadata: actionButtonCommandMetadata,
+  run: (client, input) => client.command.actionButton(input),
+  cliSchema: actionButtonCliSchema,
+  cliReader: actionButtonCliReader,
+  daemonWriter: actionButtonDaemonWriter,
+  cliOutputFormatter: systemCliOutputFormatters['action-button'],
+});
+
 const tvRemoteCommandFacet = defineCommandFacet({
   name: TV_REMOTE_COMMAND_NAME,
   text: {
@@ -323,6 +356,7 @@ export const systemCommandFamily = defineCommandFamilyFromFacets({
     homeCommandFacet,
     orientationCommandFacet,
     appSwitcherCommandFacet,
+    actionButtonCommandFacet,
     keyboardCommandFacet,
     clipboardCommandFacet,
     tvRemoteCommandFacet,

@@ -1,11 +1,22 @@
-import type { SessionAction } from '@agent-device/contracts/session';
-import type { DaemonInvokeFn, DaemonRequest, DaemonResponse } from '../../daemon-request.ts';
-import { errorResponse } from '../../response.ts';
+import type { SessionAction, SessionScope } from '@agent-device/contracts/session';
+import type { DaemonWireRequest } from '@agent-device/contracts/command';
+import type {
+  ReplayCoordinator,
+  ReplayDaemonDependencies,
+  ReplayDispatchRequest,
+  ReplayInvoke,
+  ReplaySessionObservation,
+  ReplaySessionStore,
+} from './command-types.ts';
 import { readReplaySelectorDisplayValue } from '@agent-device/selectors';
-import type { ResponseLevel } from '@agent-device/kernel/contracts';
+import {
+  type DaemonResponse,
+  errorResponse,
+  type ResponseLevel,
+} from '@agent-device/kernel/contracts';
 import type { SnapshotTimingSample } from '@agent-device/contracts/capture';
 import { withReplayFailureDiagnostics } from './session-replay-runtime-failure.ts';
-import type { ReplayCoordinator } from '../../session-replay-coordinator.ts';
+
 import { invokeReplayAction } from './session-replay-action-runtime.ts';
 import type { AdReplayStepFailure, AdReplayStepRuntime } from '@agent-device/ad-replay';
 import { collectReplayActionArtifactPaths } from './session-replay-runtime-artifacts.ts';
@@ -27,7 +38,6 @@ import {
   type TargetBindingDivergenceContext,
 } from './session-replay-target-verification.ts';
 import type { ReplayTestAttemptStepSink } from '@agent-device/replay-test';
-import type { ReplaySessionObservationStore, ReplaySessionStore } from './command-types.ts';
 
 /**
  * #1555 P5 (decomposition): the daemon's `AdReplayStepRuntime` adapter — extracted verbatim out
@@ -89,7 +99,7 @@ import type { ReplaySessionObservationStore, ReplaySessionStore } from './comman
  */
 export function createAdReplayStepRuntime(params: {
   ctx: ReplayStepContext;
-  req: DaemonRequest;
+  req: DaemonWireRequest;
   /**
    * The run's ONE artifact ledger, owned by `runReplayCommand`. `dispatchStep`
    * is its only writer, and returns its contents for the engine to thread as a
@@ -128,7 +138,6 @@ export function createAdReplayStepRuntime(params: {
     sourceLine: ctx.actionLines[index] ?? 1,
     replayPath: ctx.resolved,
     artifactPaths: [...stepArtifactPaths],
-    sessionName: ctx.sessionName,
     sessionStore: ctx.sessionStore,
     observationStore: ctx.observationStore,
     resumeStamper: ctx.coordinator.resumeStamper,
@@ -169,7 +178,6 @@ export function createAdReplayStepRuntime(params: {
       const observation: DivergenceObservation = session
         ? await captureDivergenceObservation({
             session,
-            sessionName: ctx.sessionName,
             observationStore: ctx.observationStore,
             logPath: ctx.logPath,
             action,
@@ -217,6 +225,8 @@ export function createAdReplayStepRuntime(params: {
         step: index + 1,
         tracePath: ctx.actionTracePath,
         invoke: ctx.invoke,
+        resolvedSessionScope: ctx.resolvedSessionScope,
+        dependencies: ctx.dependencies,
       });
       lastResponse = response;
       // The run's one artifact ledger: this step's entries are written into
@@ -234,7 +244,6 @@ export function createAdReplayStepRuntime(params: {
         buildDivergenceContext(action, index, stepArtifactPaths, scrubVars),
         {
           session: ctx.observationStore.get(),
-          sessionName: ctx.sessionName,
           observationStore: ctx.observationStore,
           logPath: ctx.logPath,
           action,
@@ -269,7 +278,6 @@ export function createAdReplayStepRuntime(params: {
         evidence,
         {
           session: ctx.observationStore.get(),
-          sessionName: ctx.sessionName,
           observationStore: ctx.observationStore,
           logPath: ctx.logPath,
           action,
@@ -327,10 +335,10 @@ export function createAdReplayStepRuntime(params: {
  * or reads a scope value itself.
  */
 export type ReplayStepContext = {
-  replayReq: DaemonRequest;
+  replayReq: ReplayDispatchRequest;
   sessionName: string;
   sessionStore: ReplaySessionStore;
-  observationStore: ReplaySessionObservationStore;
+  observationStore: ReplaySessionObservation;
   logPath: string;
   resolved: string;
   actions: SessionAction[];
@@ -339,10 +347,13 @@ export type ReplayStepContext = {
   planDigest: string;
   actionTracePath: string | undefined;
   responseLevel: ResponseLevel | undefined;
-  invoke: DaemonInvokeFn;
+  invoke: ReplayInvoke;
   signal: AbortSignal | undefined;
   /** #1478 P4b: the one locked gateway to this request's repair transaction. */
   coordinator: ReplayCoordinator;
+  /** The isolation scope the daemon already resolved for this request, when it did. */
+  resolvedSessionScope: SessionScope | undefined;
+  dependencies: ReplayDaemonDependencies;
 };
 
 /**
@@ -366,7 +377,7 @@ function asFailedReplayStepResponse(
 
 async function buildReplayActionFailure(
   ctx: ReplayStepContext,
-  req: DaemonRequest,
+  req: DaemonWireRequest,
   action: SessionAction,
   index: number,
   response: Extract<DaemonResponse, { ok: false }>,
@@ -389,7 +400,6 @@ async function buildReplayActionFailure(
       snapshotDiagnosticSamples,
       scrubVars,
       req,
-      sessionName: ctx.sessionName,
       sessionStore: ctx.sessionStore,
       observationStore: ctx.observationStore,
       resumeStamper: ctx.coordinator.resumeStamper,

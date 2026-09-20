@@ -425,6 +425,7 @@ function webRuntimeFacts(
         profileReport: navigationUnavailable,
       }),
       ...appSwitcherRuntimeOperationFacts({ appSwitcher: navigationUnavailable }),
+      actionButton: navigationUnavailable,
       ...appEventRuntimeOperationFacts({ triggerAppEvent: navigationUnavailable }),
       ...settingsRuntimeOperationFacts({ setSetting: navigationUnavailable }),
       ...alertRuntimeOperationFacts({

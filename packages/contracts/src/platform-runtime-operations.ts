@@ -10,7 +10,11 @@ import type { NetworkRuntimeHost, NetworkRuntimeOperations } from './network-run
 import type { ScreenRecordingRuntimeHost } from './screen-recording-runtime-host.ts';
 import type { ScreenRecordingRuntimeOperations } from './screen-recording-runtime.ts';
 import type { ScreenshotRuntimeOperations } from './screenshot-runtime.ts';
-import type { SnapshotRuntimeHost, SnapshotRuntimeOperations } from './snapshot-runtime.ts';
+import type {
+  SnapshotRuntimeExecution,
+  SnapshotRuntimeHost,
+  SnapshotRuntimeOperations,
+} from './snapshot-runtime.ts';
 import type { SelectorObservationRuntimeOperations } from './selector-observation-runtime.ts';
 import type { ViewportRuntimeOperations } from './viewport-runtime.ts';
 import type { FocusRuntimeOperations } from './focus-runtime.ts';
@@ -58,6 +62,31 @@ import {
 import { runtimeUse } from './platform-runtime-use.ts';
 import type { AndroidToolHost } from './platform-runtime-host.ts';
 
+/**
+ * The intent one zero-argument interactor operation carries: there are no arguments, so only runner
+ * metadata travels. `home` and `app-switcher` restate this shape in their own modules; the group
+ * below is the version of it that needs no module of its own.
+ */
+export type NoArgumentInteractorInput = Readonly<{
+  options?: Readonly<{ appBundleId?: string }>;
+  /** Same runner metadata a capture needs; reuses that type rather than restating it. */
+  execution?: SnapshotRuntimeExecution;
+}>;
+
+/**
+ * The zero-argument interactor operations, bound as one group by
+ * `bindNoArgumentInteractorOperations`.
+ *
+ * `actionButton` presses the iPhone/iPad Action Button. Its member is required rather than optional
+ * even though one owner can perform it today, which is how `tvRemote` handles a control only some
+ * owners have: an optional member would turn a fact that advertises the press without an interactor
+ * that performs it into a successful-looking no-op. Owners without the hardware declare the refusal
+ * on the interactor, and the fact is what keeps that throw off every supported path.
+ */
+export type NoArgumentInteractorOperations = Readonly<{
+  actionButton(input: NoArgumentInteractorInput): Promise<void>;
+}>;
+
 export type PlatformRuntimeOperations = AppLogRuntimeOperations &
   AppInventoryRuntimeOperations &
   AppDeploymentRuntimeOperations &
@@ -80,6 +109,7 @@ export type PlatformRuntimeOperations = AppLogRuntimeOperations &
   KeyboardRuntimeOperations &
   ClipboardRuntimeOperations &
   AppSwitcherRuntimeOperations &
+  NoArgumentInteractorOperations &
   AppEventRuntimeOperations &
   SettingsRuntimeOperations &
   AlertRuntimeOperations &
@@ -115,6 +145,7 @@ export const keyboardStatusUse = defineUse({ required: ['keyboardStatus'] });
 export const keyboardDismissUse = defineUse({ required: ['keyboardDismiss'] });
 export const keyboardEnterUse = defineUse({ required: ['keyboardEnter'] });
 export const appSwitcherRuntimeUse = defineUse({ required: ['appSwitcher'] });
+export const actionButtonRuntimeUse = defineUse({ required: ['actionButton'] });
 export const appEventRuntimeUse = defineUse({ required: ['triggerAppEvent'] });
 export const settingsRuntimeUse = defineUse({ required: ['setSetting'] });
 export const alertReadUse = defineUse({ required: ['readAlert'] });

@@ -9,8 +9,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test, vi } from 'vitest';
 import { SessionStore } from '../../../session-store.ts';
-import { createReplaySession } from '../../../handlers/session-replay-command.ts';
-import { runReplayTestCommand } from '../../index.ts';
+import {
+  createReplaySession,
+  replayDaemonDependencies,
+} from '../../../handlers/session-replay-command.ts';
+import {
+  replayInvokeOverDispatch,
+  runReplayTestCommand,
+  splitReplayCommandRequest,
+} from '../../index.ts';
 import type { ReplayTestCommand } from '../command-types.ts';
 import { REPLAY_ONLY_TEST_FLAG_REJECTIONS } from '../session-replay-test-policy.ts';
 import { replayCommandFamily } from '../../../../commands/replay/index.ts';
@@ -40,11 +47,12 @@ function testCommand(
   invoke: DaemonInvokeFn,
 ): ReplayTestCommand {
   return {
-    request: req,
+    ...splitReplayCommandRequest(req),
     session: createReplaySession(req.session, path.join(root, 'daemon.log'), sessionStore),
     createSession: (sessionName, logPath) =>
       createReplaySession(sessionName, logPath, sessionStore),
-    invoke,
+    invoke: replayInvokeOverDispatch(invoke, req),
+    dependencies: replayDaemonDependencies,
     cleanupSession: async () => {},
   };
 }

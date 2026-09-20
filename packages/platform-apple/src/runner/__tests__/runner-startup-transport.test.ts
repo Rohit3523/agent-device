@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, test, vi } from 'vitest';
 import assert from 'node:assert/strict';
-import type { ExecBackgroundResult } from '../host.ts';
+import type { ExecBackgroundResult } from '@agent-device/host-kit/command';
 import { appleRunnerTestHost } from '../test-host.ts';
 import { AppError } from '@agent-device/kernel/errors';
 import type { RunnerSession } from '../runner-session-types.ts';
@@ -143,7 +143,7 @@ test('waitForRunner wakes a simulator startup retry when the listener reports re
   const readiness = new AbortController();
   const session: RunnerSession = {
     ...makeReadyRunnerSession(),
-    ready: false,
+    state: 'starting',
     startupRetryWake: readiness.signal,
   };
   let fetchAttempts = 0;
@@ -225,7 +225,7 @@ test('waitForRunner preserves xcodebuild diagnostics when the runner exits durin
         'The application could not be launched because the Developer App Certificate is not trusted.',
     }),
     child: { pid: 1234, exitCode: null } as ExecBackgroundResult['child'],
-    ready: false,
+    state: 'starting',
   };
   mockUsbmuxPostCommand.mockImplementation(async () => {
     (session.child as { exitCode: number | null }).exitCode = 65;
@@ -311,6 +311,6 @@ function makeReadyRunnerSession(): RunnerSession {
     jsonPath: '/tmp/runner.json',
     testPromise: Promise.resolve({ exitCode: 0, stdout: '', stderr: '' }),
     child: { pid: 1234, exitCode: null } as ExecBackgroundResult['child'],
-    ready: true,
+    state: 'ready',
   };
 }

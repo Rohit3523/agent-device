@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { afterEach, test, vi } from 'vitest';
 import { AppError } from '@agent-device/kernel/errors';
 import { IOS_SIMULATOR } from './device-fixtures.ts';
-import type { ExecResult } from '../host.ts';
+import type { ExecResult } from '@agent-device/host-kit/command';
 import { handleRunnerTransportErrorAfterCommandSend } from '../runner-command-recovery.ts';
 import type { RunnerCommand } from '../runner-contract.ts';
 import type { RunnerSession } from '../runner-session.ts';
@@ -34,7 +34,7 @@ function makeRunnerSession(port: number): RunnerSession {
     jsonPath: '/tmp/fake.json',
     testPromise: new Promise<ExecResult>(() => {}),
     child: { pid: process.pid, exitCode: null },
-    ready: true,
+    state: 'ready',
   };
 }
 
@@ -203,4 +203,56 @@ test('a journaled RUNNER_WEDGED keeps its fatal code and stays unretriable', asy
     assert.equal(error.details?.retriable, undefined);
     return true;
   });
+});
+
+/**
+ * #2662: the `status` read has no decoder of its own, so it accepts what the one
+ * decoder accepts. A stringly-typed `ok` used to be the seam: a private truthiness
+ * rule read this retained body as the command's own result.
+ */
+test('a retained response whose ok is not the boolean true is not recovered', async () => {
+  const { result, invalidate } = await runRecovery({
+    script: [
+      {
+        kind: 'ok',
+        data: {
+          lifecycleState: 'completed',
+          lifecycleResponseJson: '{"ok":"true","data":{"tapped":true}}',
+        },
+      },
+    ],
+  });
+
+  await assert.rejects(result, (error: unknown) => {
+    assert.ok(error instanceof AppError);
+    assert.equal(error.details?.recovery, 'completed_without_retained_response');
+    return true;
+  });
+  assert.equal(invalidate.mock.calls.length, 0);
+});
+
+/**
+ * A retained body cut off mid-write answers nothing. The session is kept — the
+ * runner is reachable, it proved that by serving `status` — but the truncated
+ * command result is not handed back.
+ */
+test('a truncated retained response is not recovered', async () => {
+  const { result, invalidate } = await runRecovery({
+    script: [
+      {
+        kind: 'ok',
+        data: {
+          lifecycleState: 'completed',
+          lifecycleResponseJson: '{"ok":true,"data":{"nodes":[{"label":"Sign In"',
+        },
+      },
+    ],
+  });
+
+  await assert.rejects(result, (error: unknown) => {
+    assert.ok(error instanceof AppError);
+    assert.equal(error.details?.recovery, 'completed_without_retained_response');
+    return true;
+  });
+  assert.equal(invalidate.mock.calls.length, 0);
 });

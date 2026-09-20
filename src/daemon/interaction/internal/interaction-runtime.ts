@@ -10,9 +10,9 @@ import { getRequestSignal } from '@agent-device/host-kit/request';
 import type { Rect } from '@agent-device/kernel/snapshot';
 import type { DaemonCommandContext } from '../../context.ts';
 import { createDaemonRuntimePolicy } from '../../runtime-policy.ts';
-import { NO_ACTIVE_SESSION_MESSAGE } from '../../response.ts';
 import { buildAppleRunnerRequestOptions } from '../../apple-runner-options.ts';
 import { isLocalIosRunnerSession } from '../../direct-ios-selector.ts';
+import { recordActivationProof } from '../../capture-disclosure.ts';
 import { confirmIosOffscreenTargetVisible } from '../../offscreen-target-probe.ts';
 import { createDaemonRuntimeSessionStore } from '../../runtime-session.ts';
 import { expireRefFrame } from '../../ref-frame.ts';
@@ -31,6 +31,7 @@ import type { DaemonResponse } from '../../daemon-request.ts';
 import type { SessionState } from '../../session-state.ts';
 import type { BoundTouchExecutor } from '../../touch-runtime.ts';
 import type { BoundGestureExecutor } from '../../gesture-runtime.ts';
+import { NO_ACTIVE_SESSION_MESSAGE } from '@agent-device/kernel/contracts';
 
 export function createInteractionRuntimeForRoute(
   params: InteractionRouteInput & {
@@ -47,14 +48,16 @@ export function createInteractionRuntimeForRoute(
     flags: params.req.flags,
     session,
     contextFromFlags: params.contextFromFlags,
-    captureSnapshot: async (flags, options) =>
-      await params.captureSnapshotForSession(
+    captureSnapshot: async (flags, options) => {
+      const snapshot = await params.captureSnapshotForSession(
         session,
         flags,
         params.sessionStore,
         params.contextFromFlags,
         options,
-      ),
+      );
+      return recordActivationProof(params.activationProof, snapshot);
+    },
     runtimeSessions: createDaemonRuntimeSessionStore({
       sessionName: params.sessionName,
       getSession: () => session,

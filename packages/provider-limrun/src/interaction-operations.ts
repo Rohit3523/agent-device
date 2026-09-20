@@ -142,6 +142,17 @@ const appSwitcherUnavailableIos = Object.freeze({
   reason: 'unsupported-provider-mode',
   hint: 'Limrun iOS direct sessions do not expose app switcher yet.',
 } as const);
+/**
+ * Refused on both legs, so — unlike `limrunAppSwitcherOperationFacts`, whose Android leg rides the
+ * local Android interactor — this needs no device-parameterized helper: the iOS session has no
+ * Action Button transport, and the Android leg's own interactor refuses for the same reason the
+ * local Android fact does.
+ */
+export const LIMRUN_ACTION_BUTTON_UNAVAILABLE = Object.freeze({
+  available: false,
+  reason: 'unsupported-provider-mode',
+  hint: 'action-button presses iPhone Action Button hardware, which no Limrun session exposes.',
+} as const);
 
 /**
  * The interactor-backed interaction cells a live Limrun session serves: everything here rides
@@ -326,6 +337,13 @@ export function limrunAppSwitcherOperationFacts(
     liveSessionUnavailable ??
     (device.platform === 'android' ? available : appSwitcherUnavailableIos);
   return Object.freeze({ ...appSwitcherRuntimeOperationFacts({ appSwitcher: cell }) });
+}
+
+/** The Action Button refusal both Limrun legs share. */
+export function limrunActionButtonOperationFacts() {
+  return Object.freeze({
+    actionButton: LIMRUN_ACTION_BUTTON_UNAVAILABLE,
+  });
 }
 
 /**

@@ -53,10 +53,12 @@ it empty. Remote elements outside a web view are not classified — no capture h
 web view truncated away by the node or depth cap stays disclosed as truncation. XCTest resolves
 remote elements, so the fallback serves the page (#2484).
 
-The refusal opens the generation circuit like any other bridge failure, so a hybrid app that showed
-one web screen takes XCTest for its remaining native screens until it relaunches — the 0.20.x path
-for every screen. Re-asking the bridge per capture would instead charge a refused bridge round trip
-to every `wait` poll on the web screen; the circuit keeps that cost to one capture per generation.
+The refusal opens the generation circuit, as any failure that says something about the app itself
+does, so a hybrid app that showed one web screen takes XCTest for its remaining native screens until
+it relaunches — the 0.20.x path for every screen. Re-asking the bridge per capture would instead
+charge a refused bridge round trip to every `wait` poll on the web screen; the circuit keeps that cost
+to one capture per generation. A refusal that says something about the screen rather than the app is
+scoped per capture instead; the coordinate-space amendment below decides that case.
 
 Keep the two public snapshot strategies explicit:
 
@@ -300,21 +302,41 @@ a typed `IOS_SNAPSHOT_PRESENTATION_FAILED` capture failure with the named `prese
 snapshot-quality reason, preserved through recovery and the existing TypeScript verdict/warning
 contract.
 
-The visible-depth frontier completes that migration for unscoped regular captures. `CaptureHint`
-keeps raw traversal depth (`--raw --depth`) separate from regular presented depth. A
-hierarchy-capable tree capture walks through structural wrappers until each branch ends or reaches
-the requested presented depth; regular presentation then applies the depth limit after the shared
-fold and eligibility collapse. This keeps shallow probes bounded by the requested presented
-frontier without inventing a raw-depth multiplier. Scoped captures remain broad because depth is
-relative to the scope root selected in presentation.
+A regular `--depth` request is a presentation cut, not an acquisition bound. `CaptureHint` keeps raw
+traversal depth (`--raw --depth`) separate from regular presented depth, but the recursive tree walk
+no longer reads presented depth (or any geometry) while descending: for a regular capture it
+enumerates the hierarchy — a runaway node cap bounds the walk (#1105, #1156) — and serializes each
+node at reported traversal depth and the frame the platform reported. #2661 also removed the per-node
+coordinate space (`geometrySpace` / `parentIsWindow`) that #2612 had threaded through every walker;
+the one coordinate-space decision is now a single post-acquisition pass over the flat array
+(`SnapshotGeometrySpace.normalized`, run in `captureWithBackend`) that keys on ancestry instead of a
+value carried down the stack. That pass is why the earlier visible-depth frontier had to go: the
+frontier consulted the shared fold mid-walk, and a post-walk normalization pass cannot feed a decision
+the walk has already taken — the fold would read reported geometry, and a turned keyboard band in the
+device's native space could be cut at the wrong presented depth before the pass ever ran. With the
+frontier gone, no acquisition-time decision reads geometry, the walk is bounded only by raw traversal
+depth and the node cap, and the visibility fold and the presented-depth cut both happen inside
+`SnapshotPresentation`, on the normalized array, at `maximumDepth`. The frontier only ever engaged
+when a presented depth was set (`snapshot --depth N`; `snapshot -i` carries none), so that is the
+route whose cost the change could move. Measured there on the recursive tier, 15 warm captures per
+cell against `main` on the same simulator: the form (135 raw nodes, 4 or 6 presented) and the
+scrolled catalog list (279 raw nodes, 4 or 6 presented) walk their whole raw tree on this branch
+where `main` pruned it at the presented depth, and acquisition p50 stays within ±4 % and p95 within
+±7 % of `main` with mixed sign. The walk runs over an `XCUIElementSnapshot` tree the platform has
+already materialized in one call, which is where acquisition time goes; the node construction the
+frontier saved is not measurable on these trees. Screens that recover to private AX are untouched
+by it. The bound that remains is the raw node cap. De-duplication drops a repeated node and re-parents its children onto that node's
+own parent, so identical rows collapse under one addressable owner instead of splitting a subtree
+across two nodes with the same identity. Scoped captures remain broad because depth is relative to the
+scope root selected in presentation.
 
 Backend capability declarations are part of the contract, and they describe how much acquisition
 work a regular depth request bounds — never whether the backend may answer it. Every backend
 serves a regular `--depth` request because presentation applies the presented-depth cut to
-whatever hierarchy was acquired: the recursive tree stops acquisition at the presented frontier,
-the flat query sweep has only its root and one presented level (so a cut past depth 1 returns the
-sweep unchanged), and private AX walks its raw-depth ladder and is cut afterwards
-(`presentation-cut`). Completeness below an acquisition cap is disclosed the same way it is for an
+whatever hierarchy was acquired: the recursive tree and private AX both enumerate their hierarchy
+and are cut afterwards (`presentation-cut`), and the flat query sweep has only its root and one
+presented level (so a cut past depth 1 returns the sweep unchanged, `flat`). Completeness below an
+acquisition cap is disclosed the same way it is for an
 unscoped capture — through `truncated` and `effectiveDepth` — because a depth-capped regular
 capture is a subset of the unscoped one from the same backend. Refusing the request instead
 produced no answer at all: a plan pinned or deferred to private AX fell through to the synthetic
@@ -380,3 +402,76 @@ snapshots. Its billing, shipping, and contact forms hold text fields the session
 resolve, and a bare `type` addressed to the app process never sees that keyboard. Addressing the
 host in place is what lets the runner's first-responder route type into them; no text-entry branch
 changed for it.
+
+## Amendment: the coordinate space of a captured subtree (issue #2612)
+
+Some system surfaces keep their geometry in the device's native (portrait-up) space while the app
+is rotated, and their *whole subtree* arrives turned with them. Measured on iPhone 17 Pro (iOS
+26.2) with the system keyboard up over a landscape app frame `(0,0,874,402)`:
+`UIRemoteKeyboardWindow` reports its own box as `(0,0,402,874)` — the app's box with its two side
+lengths swapped — while the app's own window and `UITextEffectsWindow` both report `(0,0,874,402)`.
+In portrait the two spaces coincide and nothing is turned. Nothing but that box says which space a
+subtree reports in, and a consumer reading the numbers cannot tell a keyboard laid across the
+bottom of a landscape screen from a strip running down its left edge: it refused app content the
+keyboard was nowhere near and let a tap land on a key.
+
+Decision. One published capture publishes one space — the app's orientation space — and the
+producer settles it where the platform's frame is still the platform's, because downstream of the
+capture the question is unanswerable: a merged tree carries no axis a reader could turn geometry
+against. A window declares the space of its own subtree from its own box, which is either the app's
+box or that box turned through a quarter, and anything that is not a window inherits the space of
+the window above it. A published rect and the actionability verdict read from it come off the same
+oriented frame, so an address and the permission to tap it cannot disagree. Where no space can be
+named — no usable app frame, an interface orientation the platform did not report, or an app frame
+square enough to be indistinguishable from its own quarter turn — the capture publishes what the
+platform reported rather than guessing at a rotation, and consumers fail open on that geometry the
+way they do on any missing platform fact. Detection and the way back share one rotation table with
+synthesized dispatch — pure geometry that lives in the `AgentDeviceSnapshotPresentation` package
+(`SnapshotCoordinateSpace.swift`), not in the XCTest bundle — and both languages replay it against
+`contracts/fixtures/window-coordinate-space.json` in the ADR 0011 parity-table shape, which is what
+stops capture from turning back with anything other than the exact inverse of what dispatch turns
+forward.
+
+Decision. A producer that cannot name the app's interface orientation refuses the screen rather
+than publishing two spaces in one tree. The Simulator AX bridge cannot name it: the #2659 spike
+(verdict on that issue, write-up in the diff of #2667) measured that the one AX attribute for it,
+`XC_kAXXCAttributeApplicationOrientation` (id 1503), resolves but reads 0 through the guest's
+snapshot channel and errors `kAXErrorServerNotFound` through XCTest's own reader, and that the only
+cheap service read is *device* orientation, which diverges from the app's on a rotation-locked app.
+So its decoder counts window roots reporting the app's box quarter-turned and
+fails that capture (`window-coordinate-space-unresolved`, kind `unsupported`) — the same refusal
+shape as `remote-content-boundary` above — and the route serves the runner, which reads the
+orientation. A mixed tree is not half-usable: a published rect is an address, and once some rects
+in a tree answer to a turned axis no pair of them answers "how far apart are these" any more, so
+every consumer downstream would have to know which windows to distrust — a rule the capture could
+have applied and did not. The refusal costs one runner round trip and is correct.
+
+Decision. That refusal is scoped to the capture, not to the app generation. Entering the generation
+circuit is for failures that are evidence about the app: a web-view screen is a property of a
+hybrid app, so its screens keep the runner until it relaunches. A rotated surface is evidence about
+the screen in front of the reader and about nothing else — it is up now and gone after the next
+keystroke — so retiring the generation would move every later portrait capture of a healthy app
+onto the runner to work around one landscape keyboard, the cost #2491 settled for a bridge that was
+merely still being prepared. Which side of that line a failure falls on is a declared property of
+its code rather than a judgment made at the call site.
+
+What stays unnormalized, and why the consumer rule stays: the runner's recursive-tree capture now
+answers the keyboard with a measured band instead of a rebuilt one, because the same run that owns
+the tree can ask `app.keyboards` and gets an answer in the app's own orientation space (#2660). That
+closes the keyboard question on the path that used to lean on this ADR's geometry most, and it is why
+the guard's landscape refusals no longer depend on whether the tree arrived turned.
+
+What did not move is the rest of the sentence. Capture settles the space in ONE pass over the flat
+acquired array (`SnapshotGeometrySpace.normalized`, run once in `captureWithBackend` between
+acquisition and presentation, #2661), keyed on each node's `type`, `parentIndex` and `rect`. The
+runner's query-sweep tier still has no window ancestry, so nothing in its tree declares a native space:
+its flat children hang off a synthetic application root that reports the app's own box under an
+interface orientation the tier does not read, so the pass returns that tree exactly as reported — a
+structural consequence of the same rule applied uniformly, not the per-tier omission a hand-threaded
+space would have made it. The provider producers (`appium-source`, `limrun-ios-tree`) never see the
+app's windows either; a capture from any of them publishes no keyboard fact, and a consumer reads that
+silence as "this producer did not measure". Those paths publish what the platform reported, so the
+last reader that can still refuse geometry it cannot place is the tap-path keyboard guard, and its
+width rule therefore remains. The rule detects un-normalized
+arrival, not a standing fact about iOS: the producers above do normalize, and a band taller than it
+is wide is what one that did not looks like.

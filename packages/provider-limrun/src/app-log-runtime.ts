@@ -1,7 +1,10 @@
 import type { DeviceInfo } from '@agent-device/kernel/device';
 import type { AppsFilter, ProviderPortReverseOptions } from '@agent-device/contracts/device';
 import type { Interactor, RunnerContext } from '@agent-device/contracts/interactor-types';
-import { bindLimrunInteractionOperations } from './interaction-operations.ts';
+import {
+  LIMRUN_ACTION_BUTTON_UNAVAILABLE,
+  bindLimrunInteractionOperations,
+} from './interaction-operations.ts';
 import { bindAdmittedProviderInteractorOperations } from '@agent-device/contracts/interactor-operation-catalog';
 import { AppError } from '@agent-device/kernel/errors';
 import { isSupportedLimrunAppLogDevice, parseLimrunDeviceId } from './device.ts';
@@ -38,6 +41,10 @@ import {
 } from './deployment-runtime.ts';
 import { createLimrunRequestOperationDrain } from './request-cancellation.ts';
 import {
+  createLimrunScreenRecordingOperations,
+  type LimrunScreenRecordingSession,
+} from './recording-runtime.ts';
+import {
   deploymentOptions,
   limrunAppLogFacts,
   limrunAppLogRecoveryFacts,
@@ -59,6 +66,7 @@ export type LimrunPlatformRuntimeOwnerOptions = Omit<
     runtimeInstance: string;
     ownsDevice(device: DeviceInfo): boolean;
     getInteractor(device: DeviceInfo, runner?: RunnerContext): Interactor | undefined;
+    getDeviceSession(device: DeviceInfo): LimrunScreenRecordingSession | undefined;
     resolveAppReference?(device: DeviceInfo, app: string): string;
     openCurrent(device: DeviceInfo): Promise<LimrunAppLogReader | undefined>;
     hasLiveSession(device: DeviceInfo): boolean;
@@ -111,6 +119,7 @@ export function createLimrunPlatformRuntimeOwner(
             keyboard: liveSessionUnavailable,
             clipboard: liveSessionUnavailable,
             appSwitcher: liveSessionUnavailable,
+            actionButton: LIMRUN_ACTION_BUTTON_UNAVAILABLE,
             triggerAppEvent: liveSessionUnavailable,
             setSetting: liveSessionUnavailable,
             readAlert: liveSessionUnavailable,
@@ -301,6 +310,13 @@ function bindLimrunAppLogs(
       signal,
       deploymentOperationDrain,
     ),
+    ...createLimrunScreenRecordingOperations({
+      host: options.host,
+      device,
+      owner,
+      signal,
+      getDeviceSession: options.getDeviceSession,
+    }),
   } satisfies DeviceBinding<PlatformRuntimeOperations>['operations'];
   return Object.freeze({
     device,

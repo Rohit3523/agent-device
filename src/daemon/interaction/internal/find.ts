@@ -7,15 +7,19 @@ import {
 } from '@agent-device/selectors';
 import { runNodePipelineStages } from '@agent-device/selectors/selector-pipeline';
 import { SELECTOR_PIPELINE_POLICIES } from '@agent-device/selectors/selector-pipeline-policy';
-import { centerOfRect, type SnapshotState } from '@agent-device/kernel/snapshot';
+import {
+  centerOfRect,
+  type SnapshotKeyboardBandFact,
+  type SnapshotState,
+} from '@agent-device/kernel/snapshot';
 import { expireRefFrame } from '../../ref-frame.ts';
 import type { DaemonInvokeFn, DaemonRequest, DaemonResponse } from '../../daemon-request.ts';
 import type { SessionState } from '../../session-state.ts';
 import { SessionStore } from '../../session-store.ts';
 import { contextFromFlags } from '../../context.ts';
 import { readCommandMessage, successText } from '@agent-device/kernel/success-text';
-import { errorResponse, noActiveSessionError } from '../../response.ts';
-import { withSystemSurfaceDisclosure } from '../../system-surface-disclosure.ts';
+import type { RequestActivationProof } from '../../capture-disclosure.ts';
+import { withCaptureDisclosures } from '../../capture-disclosure.ts';
 import { recordSessionAction } from '../../session-action-recorder.ts';
 import { stripInternalInteractionFlags } from '../../interaction-outcome-policy.ts';
 import { resolveFindMatch } from './find-match-resolution.ts';
@@ -32,6 +36,7 @@ import type { TypeTextRuntimeOperations } from '@agent-device/contracts/type-tex
 import type { FindRouteInput } from './types.ts';
 import { createFindTargetCapture, sparseFindSnapshotResponse } from './find-target-capture.ts';
 import { isSparseSnapshotQualityVerdict } from '@agent-device/capture-kit/snapshot-quality-verdict';
+import { errorResponse, noActiveSessionError } from '@agent-device/kernel/contracts';
 
 type FindContext = {
   req: DaemonRequest;
@@ -57,6 +62,8 @@ type ResolvedMatch = {
   nodes: SnapshotState['nodes'];
   /** The in-place iOS system surface the target capture described (#2438), if any. */
   iosSystemSurfaceBundleId?: string;
+  /** The keyboard band that capture's producer measured, when it measured one (#2660). */
+  keyboard?: SnapshotKeyboardBandFact;
   actionFlags: Record<string, unknown>;
   /**
    * Set when find's row refuses this match as covered. Only the focus/type
@@ -119,6 +126,10 @@ export async function handleFindCommands(params: FindRouteInput): Promise<Daemon
   });
   if (!boundSelector.ok) return boundSelector.response;
   const selectorExpression = parseFindSelectorExpression(locator, query);
+  // One proof for the whole request: whichever capture of find's (first pass or a sparse re-capture)
+  // activated the session app owns the disclosure, including when the re-capture's tree is the one
+  // that survives and gets answered from (#2682).
+  const activationProof: RequestActivationProof = {};
   const readTargetTree = createFindTargetCapture({
     device,
     session,
@@ -129,6 +140,7 @@ export async function handleFindCommands(params: FindRouteInput): Promise<Daemon
     sessionStore,
     sessionName,
     capture: boundSelector.capture,
+    activationProof,
   });
 
   const ctx: FindContext = {
@@ -149,7 +161,13 @@ export async function handleFindCommands(params: FindRouteInput): Promise<Daemon
 
   const snapshotResult = await readTargetTree();
   if (isSparseSnapshotQualityVerdict(snapshotResult.snapshotQuality)) {
-    return sparseFindSnapshotResponse(snapshotResult.snapshotQuality);
+    // A sparse tree still consumed this request's capture, so the repair it paid for is owed here too
+    // — this return used to be the one find exit with no disclosure at all (#2682).
+    return withCaptureDisclosures({
+      response: sparseFindSnapshotResponse(snapshotResult.snapshotQuality),
+      consumedTree: snapshotResult,
+      activationProof,
+    });
   }
   const { nodes } = snapshotResult;
   const matchResult = resolveFindMatch({
@@ -162,7 +180,15 @@ export async function handleFindCommands(params: FindRouteInput): Promise<Daemon
   });
   // Matched and unmatched outcomes both consumed this capture: when it is an occluding system
   // surface, the response must disclose that app content is occluded.
-  if (!matchResult.ok) return withSystemSurfaceDisclosure(matchResult.response, snapshotResult);
+  // Find resolves its target from a capture it took itself, so the same tree is both what the
+  // response describes and what this request paid for.
+  if (!matchResult.ok) {
+    return withCaptureDisclosures({
+      response: matchResult.response,
+      consumedTree: snapshotResult,
+      activationProof,
+    });
+  }
   const node = matchResult.node;
   // Every node stage find's row declares, in one call.
   const target = await runNodePipelineStages(SELECTOR_PIPELINE_POLICIES.findAct, nodes, node);
@@ -177,12 +203,19 @@ export async function handleFindCommands(params: FindRouteInput): Promise<Daemon
     ...(snapshotResult.iosSystemSurfaceBundleId
       ? { iosSystemSurfaceBundleId: snapshotResult.iosSystemSurfaceBundleId }
       : {}),
+    ...(snapshotResult.keyboard ? { keyboard: snapshotResult.keyboard } : {}),
     actionFlags,
     ...(target.kind === 'occluded' ? { occludedNode: target.node } : {}),
   };
 
   const response = await dispatchFindAction(ctx, match, action, value);
-  return response ? withSystemSurfaceDisclosure(response, snapshotResult) : response;
+  return response
+    ? withCaptureDisclosures({
+        response,
+        consumedTree: snapshotResult,
+        activationProof,
+      })
+    : response;
 }
 
 /**
@@ -231,6 +264,8 @@ function preresolvedTarget(match: ResolvedMatch): PreresolvedInteractionTarget {
     ...(match.iosSystemSurfaceBundleId
       ? { iosSystemSurfaceBundleId: match.iosSystemSurfaceBundleId }
       : {}),
+    // #2660: the leaf's keyboard guard measures the band this capture measured, not one it re-derives.
+    ...(match.keyboard ? { keyboard: match.keyboard } : {}),
   };
 }
 

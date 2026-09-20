@@ -3,7 +3,6 @@ import type { SnapshotNode } from '@agent-device/kernel/snapshot';
 import { absenceCaptureOptionError } from '@agent-device/selectors/absence-observation-errors';
 import { absenceCaptureOptionRefusal } from '@agent-device/selectors/absence-observation';
 import type { DaemonRequest, DaemonResponse } from './daemon-request.ts';
-import { errorResponse } from './response.ts';
 import { markSessionPartialRefsIssued, resolveRefStalenessWarning } from './session-snapshot.ts';
 import {
   checkElementTargetArgs,
@@ -27,12 +26,13 @@ import {
   toDaemonFindData,
   toDaemonGetData,
 } from './selector-recording.ts';
-import type { RecordedTargetCapture } from './session-target-evidence.ts';
-import { withSystemSurfaceDisclosure } from './system-surface-disclosure.ts';
+import type { RecordedTargetCapture } from '@agent-device/selectors/target-evidence';
+import { withCaptureDisclosures } from './capture-disclosure.ts';
 import {
   createBoundSelectorRuntime,
   type SelectorRuntimeParams,
 } from './selector-runtime-backend.ts';
+import { errorResponse } from '@agent-device/kernel/contracts';
 
 export async function dispatchFindReadOnlyViaRuntime(
   params: SelectorRuntimeParams,
@@ -101,7 +101,11 @@ export async function dispatchFindReadOnlyViaRuntime(
   });
   // The consumed capture was just stored on the session: when it is an occluding system surface,
   // both found and not-found outcomes must disclose that app content is occluded.
-  return withSystemSurfaceDisclosure(response, consumedSessionSnapshot(params));
+  return withCaptureDisclosures({
+    response,
+    consumedTree: consumedSessionSnapshot(params),
+    activationProof: params.activationProof,
+  });
 }
 
 export function consumedSessionSnapshot(params: SelectorRuntimeParams) {
@@ -175,7 +179,11 @@ export async function dispatchGetViaRuntime(
     const data = toDaemonGetData(result);
     return staleRefsWarning ? { ...data, warning: staleRefsWarning } : data;
   });
-  return withSystemSurfaceDisclosure(response, consumedSessionSnapshot(params));
+  return withCaptureDisclosures({
+    response,
+    consumedTree: consumedSessionSnapshot(params),
+    activationProof: params.activationProof,
+  });
 }
 
 export async function dispatchIsViaRuntime(
@@ -231,10 +239,11 @@ export async function dispatchIsViaRuntime(
     recordIfSession(params.sessionStore, params.sessionName, req, strippedResult, recordedTarget);
     return stripSelectorChain(strippedResult);
   });
-  return withSystemSurfaceDisclosure(
-    await maybeAndroidForegroundBlockerResponse(params, response, `is ${predicate}`),
-    consumedSessionSnapshot(params),
-  );
+  return withCaptureDisclosures({
+    response: await maybeAndroidForegroundBlockerResponse(params, response, `is ${predicate}`),
+    consumedTree: consumedSessionSnapshot(params),
+    activationProof: params.activationProof,
+  });
 }
 
 /** ADR 0012 decision 3 / #1349: a wait/is result's resolution payload, when the tree path produced one. */

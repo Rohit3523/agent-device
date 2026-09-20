@@ -1,4 +1,4 @@
-import type { CommandFlags } from '@agent-device/contracts/command';
+import type { CommandFlags, DaemonWireRequest } from '@agent-device/contracts/command';
 import { setTimeout as sleep } from 'node:timers/promises';
 import {
   executeMaestroFlow,
@@ -17,24 +17,25 @@ import {
 } from '@agent-device/ad-script';
 import { createDaemonMaestroRuntimePort } from '@agent-device/maestro/daemon-runtime-port';
 import type { DeviceInfo } from '@agent-device/kernel/device';
-import type { DaemonInvokeFn, DaemonRequest, DaemonResponse } from '../../daemon-request.ts';
-import { assertSessionSelectorMatches } from '../../session-selector.ts';
-import { errorResponse } from '../../response.ts';
 import { buildReplayBuiltinVars } from './session-replay-vars.ts';
 import { createMaestroReplayObserver } from './session-replay-maestro-observer.ts';
-import { maestroOperationDaemonRequest } from './session-replay-maestro-request.ts';
+import { maestroOperationDispatchRequest } from './session-replay-maestro-request.ts';
 import {
   buildTypedMaestroReplayErrorResponse,
   buildTypedMaestroSuccessResponse,
 } from './session-replay-maestro-response.ts';
-import { resolveEffectiveOpenRuntimeHints } from '../../session-runtime.ts';
-import { buildMaestroReplayTargetDeviceResolutionOptions } from '../../replay-device-selection.ts';
+import { buildMaestroReplayTargetDeviceResolutionOptions } from './replay-script-selection.ts';
 import {
   readReplayScriptSourceFile,
   REPLAY_SCRIPT_SOURCE_REQUIRED_MESSAGE,
 } from '../../replay-script-source.ts';
 import type { ReplayScriptSourceBundle } from '@agent-device/contracts/replay';
-import type { ReplayCommand, ReplaySessionStore } from './command-types.ts';
+import type { ReplayCommand, ReplayDispatchRequest, ReplaySessionStore } from './command-types.ts';
+import {
+  errorResponse,
+  type DaemonResponse,
+  type SessionRuntimeHints,
+} from '@agent-device/kernel/contracts';
 
 type TypedMaestroReplayState = {
   snapshotStart: number;
@@ -57,7 +58,7 @@ type TypedMaestroReplayContext = {
   device?: DeviceInfo;
   platform: Extract<MaestroPlatform, 'android' | 'ios'>;
   target: string;
-  runtimeHints: ReturnType<typeof resolveEffectiveOpenRuntimeHints>;
+  runtimeHints: SessionRuntimeHints | undefined;
   defaults: Record<string, string>;
   env: Record<string, string>;
   signal: AbortSignal | undefined;
@@ -106,16 +107,18 @@ async function executeTypedMaestroReplay(
     session: { store: sessionStore },
     tracePath,
     onStep,
-    invoke,
   } = command;
   const context = await prepareTypedMaestroReplay({ command, bundle });
+  // evalScript runs via node:vm, which is not a security sandbox; only trust it
+  // for flows that did not arrive over the daemon's remote HTTP surface.
+  const publicNetworkOnly = command.publicNetworkOnly === true;
   const port = createMaestroReplayPort({
-    req,
-    invoke,
+    command,
     device: context.device,
     platform: context.platform,
     runtimeHints: context.runtimeHints,
     sourcePath: context.filePath,
+    publicNetworkOnly,
   });
   state.snapshotStart = sessionStore.get()?.snapshotDiagnostics?.samples.length ?? 0;
   const outcome = await executeMaestroFlow(context.flow, port, {
@@ -127,9 +130,7 @@ async function executeTypedMaestroReplay(
     signal: context.signal,
     from: req.flags?.replayFrom,
     planDigest: req.flags?.replayPlanDigest,
-    // evalScript runs via node:vm, which is not a security sandbox; only trust it
-    // for flows that did not arrive over the daemon's remote HTTP surface.
-    trustedScripts: req.internal?.publicNetworkOnly !== true,
+    trustedScripts: !publicNetworkOnly,
     // #1802: `runFlow` includes resolve out of the caller's bundle, so a local
     // and a remote run compile the same flow closure.
     readSource: (includePath) => readReplayScriptSourceFile(bundle, includePath),
@@ -169,7 +170,7 @@ async function prepareTypedMaestroReplay(
   // conflict must tell the caller to close or reuse.
   const sessionRef = sessionStore.lookup();
   const session = sessionRef?.session;
-  if (sessionRef) assertSessionSelectorMatches(sessionRef, req.flags);
+  if (sessionRef) sessionStore.assertSelectorMatches(req.flags);
   const binding = await resolveMaestroReplayBinding({
     req,
     sessionStore,
@@ -194,7 +195,7 @@ async function prepareTypedMaestroReplay(
 }
 
 async function resolveMaestroReplayBinding(params: {
-  req: DaemonRequest;
+  req: DaemonWireRequest;
   sessionStore: ReplaySessionStore;
   sessionName: string;
   session: ReturnType<ReplaySessionStore['get']>;
@@ -232,7 +233,7 @@ async function resolveMaestroReplayBinding(params: {
 
 async function completeMaestroRuntimeBinding(
   params: {
-    req: DaemonRequest;
+    req: DaemonWireRequest;
     sessionStore: ReplaySessionStore;
     sessionName: string;
     flow: MaestroFlow;
@@ -258,29 +259,20 @@ async function completeMaestroRuntimeBinding(
 }
 
 function resolveReplayRuntimeHints(params: {
-  req: DaemonRequest;
+  req: DaemonWireRequest;
   sessionStore: ReplaySessionStore;
   sessionName: string;
   device?: DeviceInfo;
   platform?: Extract<MaestroPlatform, 'android' | 'ios'>;
-}): ReturnType<typeof resolveEffectiveOpenRuntimeHints> {
-  return resolveEffectiveOpenRuntimeHints({
-    req: params.req,
-    sessionStore: {
-      getRuntimeHints: (requestedSessionName) =>
-        requestedSessionName === params.sessionName
-          ? params.sessionStore.getRuntimeHints()
-          : undefined,
-    },
-    sessionName: params.sessionName,
+}): SessionRuntimeHints | undefined {
+  return params.sessionStore.resolveOpenRuntimeHints({
+    request: params.req,
     device: params.device,
     platform: params.platform,
   });
 }
 
-function requiresDeviceRuntimeDefaults(
-  runtimeHints: ReturnType<typeof resolveEffectiveOpenRuntimeHints>,
-): boolean {
+function requiresDeviceRuntimeDefaults(runtimeHints: SessionRuntimeHints | undefined): boolean {
   return (
     runtimeHints?.metroPort !== undefined &&
     runtimeHints.metroHost === undefined &&
@@ -289,7 +281,7 @@ function requiresDeviceRuntimeDefaults(
 }
 
 function buildTypedMaestroDefaults(params: {
-  req: DaemonRequest;
+  req: DaemonWireRequest;
   sessionName: string;
   filePath: string;
   platform: Extract<MaestroPlatform, 'android' | 'ios'>;
@@ -307,7 +299,7 @@ function buildTypedMaestroDefaults(params: {
   };
 }
 
-function buildTypedMaestroEnv(req: DaemonRequest): Record<string, string> {
+function buildTypedMaestroEnv(req: DaemonWireRequest): Record<string, string> {
   return {
     ...collectReplayShellEnv(readReplayShellEnvSource(req.flags?.replayShellEnv)),
     ...parseReplayCliEnvEntries(readReplayCliEnvEntries(req.flags?.replayEnv)),
@@ -315,19 +307,24 @@ function buildTypedMaestroEnv(req: DaemonRequest): Record<string, string> {
 }
 
 function createMaestroReplayPort(params: {
-  req: DaemonRequest;
-  invoke: DaemonInvokeFn;
+  command: ReplayCommand;
   device: DeviceInfo | undefined;
   platform: Extract<MaestroPlatform, 'android' | 'ios'>;
-  runtimeHints: ReturnType<typeof resolveEffectiveOpenRuntimeHints>;
+  runtimeHints: SessionRuntimeHints | undefined;
   sourcePath: string;
+  publicNetworkOnly: boolean;
 }) {
-  const { req, invoke, device, platform, runtimeHints, sourcePath } = params;
-  const replay = { ...req, runtime: runtimeHints };
+  const { command, device, platform, runtimeHints, sourcePath, publicNetworkOnly } = params;
+  const { request: req, invoke } = command;
+  const replay: ReplayDispatchRequest = {
+    ...req,
+    runtime: runtimeHints,
+    ...(command.dispatch ? { dispatch: command.dispatch } : {}),
+  };
   return createDaemonMaestroRuntimePort({
-    invoke: (operation) => invoke(maestroOperationDaemonRequest(replay, operation)),
+    invoke: (operation) => invoke(maestroOperationDispatchRequest(replay, operation)),
     flags: maestroRuntimeDeviceFlags(device, platform, req.flags),
-    publicNetworkOnly: req.internal?.publicNetworkOnly === true,
+    publicNetworkOnly,
     platform,
     sourcePath,
     dependencies: {
@@ -396,7 +393,7 @@ function unresolvedIosMaestroFlags(
 }
 
 function resolveMaestroPlatform(
-  req: DaemonRequest,
+  req: DaemonWireRequest,
   sessionDevice: DeviceInfo | undefined,
 ): Extract<MaestroPlatform, 'android' | 'ios'> {
   const platform = req.flags?.platform;
@@ -409,7 +406,10 @@ function resolveMaestroPlatform(
   );
 }
 
-function resolveMaestroTarget(req: DaemonRequest, sessionDevice: DeviceInfo | undefined): string {
+function resolveMaestroTarget(
+  req: DaemonWireRequest,
+  sessionDevice: DeviceInfo | undefined,
+): string {
   return typeof req.flags?.target === 'string'
     ? req.flags.target
     : (sessionDevice?.target ?? 'mobile');

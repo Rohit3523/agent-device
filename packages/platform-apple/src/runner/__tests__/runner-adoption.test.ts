@@ -140,7 +140,7 @@ test('adoption succeeds for a live, matching, probe-healthy runner', async () =>
 
   expect(session).not.toBeNull();
   expect(session?.port).toBe(lease.port);
-  expect(session?.ready).toBe(true);
+  expect(session?.state).toBe('ready');
   expect(session?.child.pid).toBe(424242);
   expect(session?.sessionId).toBe(lease.sessionId);
   expect(session?.xctestrunArtifact?.reason).toBe('adopted_from_lease');
@@ -252,7 +252,7 @@ test('adoption accepts a legacy lease whose live pid is runner-shaped', async ()
 
   const session = await tryAdoptRunnerSessionFromLease(simulator, {});
 
-  expect(session?.ready).toBe(true);
+  expect(session?.state).toBe('ready');
   expect(session?.child.pid).toBe(424242);
 });
 
@@ -287,6 +287,27 @@ test('adoption is skipped when the probe fails', async () => {
   mockSendRunnerCommandOnce.mockRejectedValue(new Error('connection refused'));
 
   expect(await tryAdoptRunnerSessionFromLease(simulator, {})).toBeNull();
+});
+
+// #2662: the probe decodes through the command path's decoder, so a body that
+// path would refuse cannot be read as an answer here either. Adoption must not
+// re-stamp the lease for a runner it cannot read.
+test('adoption is skipped when the uptime probe answers a truncated body', async () => {
+  const lease = writeStaleLease();
+  mockIsProcessAlive.mockReturnValue(true);
+  mockSendRunnerCommandOnce.mockResolvedValue(new Response('{"ok":true,"data":{"uptime":'));
+
+  expect(await tryAdoptRunnerSessionFromLease(simulator, {})).toBeNull();
+  expect(readStaleRunnerLease(simulator.id)?.ownerToken).toBe(lease.ownerToken);
+});
+
+test('adoption is skipped when the uptime probe answers an ok that is not the boolean true', async () => {
+  const lease = writeStaleLease();
+  mockIsProcessAlive.mockReturnValue(true);
+  mockSendRunnerCommandOnce.mockResolvedValue(new Response('{"ok":"true"}'));
+
+  expect(await tryAdoptRunnerSessionFromLease(simulator, {})).toBeNull();
+  expect(readStaleRunnerLease(simulator.id)?.ownerToken).toBe(lease.ownerToken);
 });
 
 test('adoption is disabled by the kill switch', async () => {

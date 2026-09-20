@@ -62,6 +62,14 @@ export function createLimrunRuntimeDependencies(): LimrunRuntimeDependencies {
           timeoutMs: 5_000,
         });
       },
+      forceStopApp: async (adb, packageName, signal) => {
+        const { runAdbShell } = await import('@agent-device/platform-android/mechanics');
+        await runAdbShell(
+          async (args, options) => await adb(args, { ...options, signal }),
+          ['am', 'force-stop', packageName],
+          { allowFailure: true },
+        );
+      },
       deviceAdbInvocation: (serial, command) =>
         androidAdbInvocation(androidAdbSerialTarget(serial), command),
       hostAdbInvocation: (command) => androidAdbInvocation(androidAdbHostTarget(), command),
@@ -80,6 +88,10 @@ export function createLimrunRuntimeDependencies(): LimrunRuntimeDependencies {
     },
     host: {
       runAdb: async (invocation, options) => await runAndroidHostAdb(invocation, options),
+      downloadFile: async (options) => {
+        const { downloadLimrunFile } = await import('./limrun-download-file.ts');
+        await downloadLimrunFile(options);
+      },
       archiveDirectory: async ({ sourceDirectory, entryName, archivePath }) => {
         const args = ['-qr', archivePath, entryName];
         const result = await runCmd('zip', args, {

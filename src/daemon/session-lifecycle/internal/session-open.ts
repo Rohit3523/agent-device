@@ -12,7 +12,7 @@ import type { SessionState } from '../../session-state.ts';
 import { SessionStore } from '../../session-store.ts';
 import { refreshSessionDeviceIfNeeded } from '../../session-device-resolution.ts';
 import { withKeyedLock } from '@agent-device/kernel/keyed-lock';
-import { buildOpenTargetDeviceResolutionOptions } from '../../open-device-selection.ts';
+import { buildOpenTargetDeviceResolutionOptions } from '@agent-device/device-selection/open-target';
 import {
   invalidOpenArgs,
   prepareOpenCommandDetails,
@@ -26,7 +26,6 @@ import {
   composeOpenWithInitialSnapshot,
   resolveForegroundOpenRequest,
 } from './session-open-foreground.ts';
-import { errorResponse } from '../../response.ts';
 import { expireRefFrame } from '../../ref-frame.ts';
 import type { DeviceClaimReconciler } from '../../device-claims.ts';
 import type {
@@ -44,6 +43,7 @@ import {
   type RuntimeHintApplyOperation,
   type RuntimeHintClearOperation,
 } from './session-open-execution.ts';
+import { errorResponse } from '@agent-device/kernel/contracts';
 
 export type SessionOpenCommandInput = Readonly<{
   req: DaemonRequest;

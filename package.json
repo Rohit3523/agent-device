@@ -1,6 +1,6 @@
 {
   "name": "agent-device",
-  "version": "0.21.6",
+  "version": "0.21.7",
   "description": "Mobile app automation and verification for AI coding agents. CLI, MCP server, and typed Node.js API for iOS, Android, HarmonyOS, TV, web, macOS, and Linux.",
   "mcpName": "io.github.callstack/agent-device",
   "license": "MIT",
@@ -318,6 +318,7 @@
     "fallow": "^2.104.0",
     "fast-check": "^4.9.0",
     "ipaddr.js": "^2.5.0",
+    "jpeg-js": "^0.4.4",
     "oxc-parser": "^0.146.0",
     "oxfmt": "^0.64.0",
     "oxlint": "^1.79.0",

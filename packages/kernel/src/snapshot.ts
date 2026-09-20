@@ -275,6 +275,35 @@ export type HiddenContentHint = {
   hiddenContentBelow?: true;
 };
 
+/**
+ * What a capture's producer can say about the software keyboard on screen, measured while the tree
+ * was captured rather than rebuilt from it afterwards.
+ *
+ * A keyboard is its own system surface, so it never reaches the tree as a covering sibling of app
+ * content, and a consumer that wants to refuse a tap behind it has to learn where it is from
+ * somewhere (#2589). A producer that can measure the band directly — the Apple runner, from its
+ * `app.keyboards` query — publishes one fact per capture and says nothing else about it. A consumer therefore gets three
+ * answers and no fourth: a band in the same space as every node rect, a proven absence, or a
+ * producer that could not look.
+ *
+ * A producer that publishes nothing has declared nothing, so absence from a result means the same
+ * thing as `unmeasurable` — which is why the field stays optional on every carrier, including the
+ * three client-side paths that rebuild a state from a bare backend result (#2199). Those consumers
+ * then derive the band from the tree they hold: the rule that stays for the producers that publish
+ * no fact (#2660).
+ */
+export type SnapshotKeyboardBandFact =
+  /** The band the keyboard occupies, in the same orientation space as this capture's node rects. */
+  | { kind: 'visible'; frame: Rect }
+  /** The producer looked for the keyboard and found none. */
+  | { kind: 'absent' }
+  /**
+   * The producer cannot measure the band on this path, with a stable reason code. Typed rather than
+   * inferred from absence so a log says which path failed to measure without the consumer having to
+   * guess which producer it was talking to.
+   */
+  | { kind: 'unmeasurable'; reason: string };
+
 export type SnapshotNode = RawSnapshotNode & {
   ref: string;
   /**
@@ -386,6 +415,55 @@ export function usesMobileSnapshotPresentation(backend: SnapshotBackend | undefi
   );
 }
 
+/**
+ * Reasons the Apple runner can stamp when serving a command required re-activating the session app
+ * (#2682). Mirrors its `activateTarget(bundleId:reason:)` call sites.
+ */
+export const IOS_TARGET_ACTIVATION_REASONS = [
+  'bundle_changed',
+  'stale_target',
+  'missing_after_wait',
+  'interaction_foreground_guard',
+] as const;
+
+export type IosTargetActivationReason = (typeof IOS_TARGET_ACTIVATION_REASONS)[number];
+
+/** Whether `value` is a reason the runner can stamp; the only gate consumers apply to the field. */
+export function isIosTargetActivationReason(value: unknown): value is IosTargetActivationReason {
+  return (
+    typeof value === 'string' &&
+    (IOS_TARGET_ACTIVATION_REASONS as readonly string[]).includes(value)
+  );
+}
+
+/**
+ * States an activation could have been needed for, in `XCApplicationState` raw order.
+ * `runningForeground` is excluded because the runner skips `activate()` when the app is already
+ * foreground and never stamps a fact there.
+ */
+export const IOS_TARGET_ACTIVATION_PRIOR_STATES = [
+  'unknown',
+  'notRunning',
+  'runningBackground',
+  'runningBackgroundSuspended',
+] as const;
+
+export type IosTargetActivationPriorState = (typeof IOS_TARGET_ACTIVATION_PRIOR_STATES)[number];
+
+/**
+ * Foreground repair the Apple runner performed while serving one command (#2682). `priorState` is
+ * the session app's state BEFORE the runner activated it, so the fact describes what was repaired
+ * rather than what the repair produced. `otherActiveApplicationPid` is present only when exactly one
+ * application other than the session app held an active accessibility session at that moment: a
+ * liveness claim and nothing more, since the private AX client reports no ordering of
+ * `activeApplications`, resolves pids only, and answers no bundle id for an arbitrary app.
+ */
+export type IosTargetActivation = Readonly<{
+  reason: IosTargetActivationReason;
+  priorState: IosTargetActivationPriorState;
+  otherActiveApplicationPid?: number;
+}>;
+
 export type SnapshotState = {
   nodes: SnapshotNode[];
   createdAt: number;
@@ -407,6 +485,19 @@ export type SnapshotState = {
    * must never be compared as the same presentation; consumers that surface the tree disclose it.
    */
   iosSystemSurfaceBundleId?: string;
+  /**
+   * iOS: the keyboard band this capture's producer measured, when it measured one. The tap-path
+   * keyboard guard prefers this over the band it would otherwise derive from `nodes`, because a
+   * producer that can query the keyboard directly answers in the app's own orientation space and
+   * needs no geometry to be plausible (#2660). Absent means the guard measures the tree as before.
+   */
+  keyboard?: SnapshotKeyboardBandFact;
+  /**
+   * iOS: this capture's own command found the session app out of foreground and the runner
+   * activated it before answering, so an earlier observation in the session described whatever held
+   * the foreground instead (#2682). Consumers that surface this tree disclose the repair.
+   */
+  targetActivation?: IosTargetActivation;
 } & SnapshotStateProvenance;
 
 export type SnapshotUnchanged = {

@@ -64,6 +64,7 @@ export type UnavailablePlatformRuntimeFacts = Readonly<{
   keyboard: RuntimeOperationUnavailability;
   clipboard: RuntimeOperationUnavailability;
   appSwitcher: RuntimeOperationUnavailability;
+  actionButton: RuntimeOperationUnavailability;
   triggerAppEvent: RuntimeOperationUnavailability;
   setSetting: RuntimeOperationUnavailability;
   readAlert: RuntimeOperationUnavailability;
@@ -119,6 +120,7 @@ const UNAVAILABLE_CELLS = {
   keyboard: true,
   clipboard: true,
   appSwitcher: true,
+  actionButton: true,
   triggerAppEvent: true,
   setSetting: true,
   readAlert: true,
@@ -239,6 +241,7 @@ export function createUnavailablePlatformRuntimeFacts(
       ...keyboardRuntimeOperationFacts({ unsupported: frozen.keyboard }),
       ...clipboardRuntimeOperationFacts({ unsupported: frozen.clipboard }),
       ...appSwitcherRuntimeOperationFacts({ appSwitcher: frozen.appSwitcher }),
+      actionButton: frozen.actionButton,
       ...appEventRuntimeOperationFacts({ triggerAppEvent: frozen.triggerAppEvent }),
       ...settingsRuntimeOperationFacts({ setSetting: frozen.setSetting }),
       ...alertRuntimeOperationFacts({

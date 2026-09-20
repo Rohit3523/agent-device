@@ -298,6 +298,7 @@ function createContractFixture() {
         dismissed: false,
       }),
       readLogs: async () => 'log line\n',
+      forceStopApp: async () => {},
       deviceAdbInvocation: (serial: string, command: readonly string[]) =>
         androidAdbInvocation(androidAdbSerialTarget(serial), command),
       hostAdbInvocation: (command: readonly string[]) =>
@@ -310,6 +311,7 @@ function createContractFixture() {
         return { stdout: '', stderr: '', exitCode: 0 };
       },
       archiveDirectory: async () => undefined,
+      downloadFile: async () => undefined,
     },
     ios: {
       resolveAppAlias: async (app: string) => app,

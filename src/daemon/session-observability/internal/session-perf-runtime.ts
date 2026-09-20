@@ -1,10 +1,16 @@
 import path from 'node:path';
+import { type PerfCaptureAdmissionLedger } from '@agent-device/capture-kit/perf-capture-admission-ledger';
+import {
+  adoptStartedPerfCapture,
+  finishLivePerfCapture,
+  perfCaptureDurableResource,
+} from '@agent-device/capture-kit/perf-capture-session-resource';
 import {
   parsePerfRuntimeRequest,
-  resolvePerfRuntimePlan,
   type PerfRuntimePlan,
   type PerfRuntimeRequest,
-} from '../../perf-runtime-plan.ts';
+  resolvePerfRuntimePlan,
+} from '@agent-device/capture-kit/perf-runtime-plan';
 import type {
   PerfData,
   PerfNativeCaptureSnapshot,
@@ -18,12 +24,6 @@ import {
 } from '@agent-device/contracts/observability';
 import { publicPlatformString } from '@agent-device/kernel/device';
 import { AppError, normalizeError } from '@agent-device/kernel/errors';
-import type { PerfCaptureAdmissionLedger } from '../../perf-capture-admission-ledger.ts';
-import {
-  adoptStartedPerfCapture,
-  finishLivePerfCapture,
-  perfCaptureDurableResource,
-} from '../../perf-capture-session-resource.ts';
 import type {
   BindDeviceRuntime,
   InspectDeviceRuntimeFacts,
@@ -32,7 +32,6 @@ import { SessionStore } from '../../session-store.ts';
 import type { DaemonRequest, DaemonResponse } from '../../daemon-request.ts';
 import type { SessionState } from '../../session-state.ts';
 import { recordSessionAction } from '../../session-action-recorder.ts';
-import { errorResponse } from '../../response.ts';
 import {
   admitRuntimePlan,
   requireRuntimeBinding,
@@ -40,6 +39,7 @@ import {
   unwrapAdmittedRuntimePlan,
   type AdmittedRuntimePlan,
 } from '../../session-runtime-admission.ts';
+import { errorResponse } from '@agent-device/kernel/contracts';
 
 export type PerfRuntimeHandlerParams = Readonly<{
   req: DaemonRequest;

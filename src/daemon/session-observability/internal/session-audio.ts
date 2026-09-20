@@ -8,12 +8,12 @@ import {
 } from '@agent-device/contracts/audio-runtime-plan';
 import { emptyAudioProbeResult } from '@agent-device/contracts/audio-probe-result';
 import type { RuntimeOperationFact } from '@agent-device/contracts/platform-runtime';
-import type { AudioProbeAdmissionLedger } from '../../audio-probe-admission-ledger.ts';
+import { type AudioProbeAdmissionLedger } from '@agent-device/capture-kit/audio-probe-admission-ledger';
 import {
   adoptStartedAudioProbe,
   audioProbeDurableResource,
   finishLiveAudioProbe,
-} from '../../audio-probe-session-resource.ts';
+} from '@agent-device/capture-kit/audio-probe-session-resource';
 import type {
   BindDeviceRuntime,
   InspectDeviceRuntimeFacts,
@@ -21,7 +21,7 @@ import type {
 import type { SessionStore } from '../../session-store.ts';
 import type { DaemonRequest, DaemonResponse } from '../../daemon-request.ts';
 import type { SessionState } from '../../session-state.ts';
-import { errorResponse, type DaemonFailureResponse } from '../../response.ts';
+import { type DaemonFailureResponse, errorResponse } from '@agent-device/kernel/contracts';
 
 type AudioParams = {
   req: DaemonRequest;

@@ -11,7 +11,12 @@ import {
   type DaemonError,
 } from '@agent-device/kernel/errors';
 import { timingSafeStringEqual } from '@agent-device/host-kit/transport';
-import type { DaemonArtifactType, ResponseCost } from '@agent-device/kernel/contracts';
+import {
+  type DaemonArtifactType,
+  type ResponseCost,
+  errorResponse,
+  noActiveSessionError,
+} from '@agent-device/kernel/contracts';
 import type { CloudArtifactProvider } from '@agent-device/contracts/observability';
 import type {
   RequestPlatformProviderScope,
@@ -25,7 +30,6 @@ import type {
 } from './daemon-request.ts';
 import { RESPONSE_VIEWS } from './response-views.ts';
 import { SessionStore } from './session-store.ts';
-import { errorResponse, noActiveSessionError } from './response.ts';
 import { resolvePlatformProviderRequestContext } from './request-platform-provider-context.ts';
 import {
   countDiagnosticEventsByPhase,
@@ -50,7 +54,7 @@ import {
 import { unsupportedSaveScriptFlagResponse } from './request-save-script-policy.ts';
 import { canRunReplayScopedAction } from './daemon-command-registry.ts';
 import { isWebSession } from './web-session-names.ts';
-import { inferFillText } from './action-utils.ts';
+import { inferFillText } from '@agent-device/ad-script';
 import { createPlatformRequestScope } from './platform-request-scope.ts';
 import { createOwnerScopedDeviceClaimReconciler } from './device-claim-owner-recovery.ts';
 import {
@@ -58,18 +62,18 @@ import {
   type AppLogAdmissionLedger,
 } from './app-log-admission-ledger.ts';
 import {
-  createAudioProbeAdmissionLedger,
   type AudioProbeAdmissionLedger,
-} from './audio-probe-admission-ledger.ts';
+  createAudioProbeAdmissionLedger,
+} from '@agent-device/capture-kit/audio-probe-admission-ledger';
 import {
   createPerfCaptureAdmissionLedger,
   type PerfCaptureAdmissionLedger,
-} from './perf-capture-admission-ledger.ts';
-import type { HostDiagnostics } from '@agent-device/contracts/host-diagnostics';
+} from '@agent-device/capture-kit/perf-capture-admission-ledger';
 import {
   createScreenRecordingAdmissionLedger,
   type ScreenRecordingAdmissionLedger,
-} from './screen-recording-admission-ledger.ts';
+} from '@agent-device/capture-kit/screen-recording-admission-ledger';
+import type { HostDiagnostics } from '@agent-device/contracts/host-diagnostics';
 import { resolveGenericRuntimeExecution } from './generic-runtime-execution.ts';
 import type { AndroidObservationAdapter } from '@agent-device/contracts/android-observation';
 import type { PlatformResourceCleanup } from './platform-resource-cleanup.ts';

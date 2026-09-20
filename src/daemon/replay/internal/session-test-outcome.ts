@@ -1,8 +1,8 @@
 import { readSnapshotDiagnosticsSummary } from '@agent-device/contracts/capture';
 import { readResponseWarnings } from '@agent-device/kernel/success-text';
-import type { DaemonResponse } from '../../daemon-request.ts';
 import { isReplayInfrastructureFailure } from './session-test-infrastructure.ts';
 import type { ReplayTestAttemptFailed, ReplayTestAttemptOutcome } from '@agent-device/replay-test';
+import { type DaemonResponse } from '@agent-device/kernel/contracts';
 
 /**
  * The one place a `DaemonResponse` becomes a neutral replay-test attempt outcome (#1478 P3).

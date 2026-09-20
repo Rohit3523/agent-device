@@ -7,7 +7,6 @@ import { displayLabel, formatRole } from '@agent-device/capture-kit/snapshot-lin
 import type { ResponseLevel } from '@agent-device/kernel/contracts';
 import type { DaemonError } from '@agent-device/kernel/errors';
 import type { SnapshotNode } from '@agent-device/kernel/snapshot';
-import { captureSnapshot } from '../../snapshot-capture.ts';
 import { collectReplaySelectorCandidates } from './session-replay-heal.ts';
 import { buildSelectorCandidates, resolveReplaySuggestionCandidate } from '@agent-device/selectors';
 import { collectSettleChromeRefs } from '@agent-device/capture-kit/snapshot-chrome';
@@ -17,16 +16,18 @@ import {
   computeReplayRepairHint,
   type ReplayRepairHintCapture,
 } from './session-replay-repair-hint.ts';
-import type { ReplaySessionObservationStore, ReplaySessionStore } from './command-types.ts';
-import type { ReplayResumeStamper } from '../../session-replay-coordinator.ts';
-import {
-  bindInternalObservationAuthority,
-  type InternalObservationEvidence,
-} from '../../internal-observation.ts';
+import type {
+  ReplayResumeStamper,
+  ReplaySessionObservation,
+  ReplaySessionState,
+  ReplaySessionStore,
+} from './command-types.ts';
+
+import type { ReplayObservationEvidence } from '@agent-device/contracts/replay';
 import { boundReplayDivergenceForSession } from './session-replay-divergence-publication.ts';
 import type { ReplayReportAction } from './session-replay-report-action.ts';
 import { rankAndDedupeReplaySuggestions } from './session-replay-suggestion-ranking.ts';
-import type { SessionState } from '../../session-state.ts';
+
 import {
   type ReplayDivergence,
   type ReplayDivergenceScreen,
@@ -55,10 +56,9 @@ export async function buildReplayFailureDivergence(params: {
   index: number;
   sourcePath: string;
   sourceLine: number;
-  session: SessionState | undefined;
-  sessionName: string;
+  session: ReplaySessionState | undefined;
   sessionStore: ReplaySessionStore;
-  observationStore: ReplaySessionObservationStore;
+  observationStore: ReplaySessionObservation;
   /** #1478 P4b: the request's bound resume-stamping capability — never a second-constructed coordinator. */
   resumeStamper: ReplayResumeStamper;
   logPath: string;
@@ -78,7 +78,6 @@ export async function buildReplayFailureDivergence(params: {
     sourcePath,
     sourceLine,
     session,
-    sessionName,
     sessionStore,
     observationStore,
     resumeStamper,
@@ -100,7 +99,6 @@ export async function buildReplayFailureDivergence(params: {
   const observation = session
     ? await captureDivergenceObservation({
         session,
-        sessionName,
         observationStore,
         logPath,
         action,
@@ -159,7 +157,6 @@ export async function buildReplayFailureDivergence(params: {
   return boundReplayDivergenceForSession({
     sessionStore,
     observationStore,
-    sessionName,
     divergence,
     responseLevel,
     evidence: observation.state === 'available' ? observation.evidence : undefined,
@@ -172,7 +169,7 @@ export type DivergenceObservation =
       state: 'available';
       nodes: SnapshotNode[];
       refsGeneration: number;
-      evidence: InternalObservationEvidence;
+      evidence: ReplayObservationEvidence;
       /** Session's app bundle id at capture time; threaded to `buildDivergenceScreen`'s chrome filter (Android IME-scope guard — inert on iOS). */
       appBundleId: string | undefined;
     }
@@ -247,21 +244,13 @@ const DIVERGENCE_CAPTURE_RETRY_DEADLINE_MS = 12_000;
 const DIVERGENCE_CAPTURE_RETRY_DELAYS_MS = [300, 500, 800, 1200, 2000, 3000, 4000] as const;
 
 export async function captureDivergenceObservation(params: {
-  session: SessionState;
-  sessionName: string;
-  observationStore: ReplaySessionObservationStore;
+  session: ReplaySessionState;
+  observationStore: ReplaySessionObservation;
   logPath: string;
   action: ReplayReportAction;
   retryLaunchRace?: boolean;
 }): Promise<DivergenceObservation> {
-  const {
-    session,
-    sessionName,
-    observationStore,
-    logPath,
-    action,
-    retryLaunchRace = false,
-  } = params;
+  const { session, observationStore, logPath, action, retryLaunchRace = false } = params;
   const flags = divergenceCaptureFlags(action);
   // Anchored BEFORE the first attempt, not after: a slow first capture
   // shrinks the retry budget rather than getting a free `DEADLINE_MS` on top
@@ -270,7 +259,6 @@ export async function captureDivergenceObservation(params: {
 
   let attempt = await captureDivergenceObservationAttempt({
     session,
-    sessionName,
     observationStore,
     logPath,
     flags,
@@ -284,7 +272,6 @@ export async function captureDivergenceObservation(params: {
     await sleep(Math.min(delayMs, remainingMs));
     attempt = await captureDivergenceObservationAttempt({
       session,
-      sessionName,
       observationStore,
       logPath,
       flags,
@@ -310,20 +297,14 @@ type DivergenceCaptureAttempt = {
 };
 
 async function captureDivergenceObservationAttempt(params: {
-  session: SessionState;
-  sessionName: string;
-  observationStore: ReplaySessionObservationStore;
+  session: ReplaySessionState;
+  observationStore: ReplaySessionObservation;
   logPath: string;
   flags: CommandFlags;
 }): Promise<DivergenceCaptureAttempt> {
-  const { session, sessionName, observationStore, logPath, flags } = params;
+  const { session, observationStore, logPath, flags } = params;
   try {
-    const capture = await captureSnapshot({
-      device: session.device,
-      session,
-      flags,
-      logPath,
-    });
+    const capture = await observationStore.capture({ flags, logPath });
     const snapshot = capture.snapshot;
     if (isSparseSnapshotQualityVerdict(snapshot.snapshotQuality)) {
       return {
@@ -335,10 +316,7 @@ async function captureDivergenceObservationAttempt(params: {
         retryable: true,
       };
     }
-    const observationAuthority = bindInternalObservationAuthority({
-      sessionStore: observationStore,
-      sessionName,
-    });
+    const observationAuthority = observationStore.bindAuthority();
     const stored = observationAuthority.store(snapshot);
     return {
       observation: {
@@ -535,7 +513,7 @@ function buildReplayDivergenceScreenRefs(
  */
 function collectReplayDivergenceSuggestions(params: {
   action: ReplayReportAction;
-  session: SessionState;
+  session: ReplaySessionState;
   nodes: SnapshotNode[];
   sanitize: DivergenceFieldSanitizer;
 }): ReplayDivergenceSuggestion[] {
@@ -575,7 +553,7 @@ type RankedSuggestion = {
 function rankSuggestionCandidates(params: {
   candidates: string[];
   nodes: SnapshotNode[];
-  session: SessionState;
+  session: ReplaySessionState;
   action: ReplayReportAction;
   matching: SuggestionMatchingConfig;
   sanitize: DivergenceFieldSanitizer;
@@ -604,7 +582,7 @@ function rankSuggestionCandidates(params: {
 function resolveSuggestionCandidate(params: {
   candidate: string;
   nodes: SnapshotNode[];
-  session: SessionState;
+  session: ReplaySessionState;
   action: ReplayReportAction;
   matching: SuggestionMatchingConfig;
   sanitize: DivergenceFieldSanitizer;
@@ -634,7 +612,7 @@ export function buildReplayDivergenceSuggestionForNode(params: {
   node: SnapshotNode;
   /** The record-time tree the node came from, for #1269 non-unique-id demotion in the chain. */
   nodes: readonly SnapshotNode[];
-  session: SessionState;
+  session: ReplaySessionState;
   action: ReplayReportAction;
   basis: ReplayDivergenceSuggestionBasis;
   sanitize: DivergenceFieldSanitizer;

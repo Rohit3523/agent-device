@@ -316,6 +316,7 @@ export const limrunTestDependencies = {
       dismissed: false,
     }),
     readLogs: async () => '',
+    forceStopApp: async () => {},
     deviceAdbInvocation: (serial: string, command: readonly string[]) => ({
       target: { selector: { kind: 'serial', serial }, server: { kind: 'ambient' } },
       command,
@@ -330,6 +331,7 @@ export const limrunTestDependencies = {
   },
   host: {
     runAdb: async () => ({ stdout: '', stderr: '', exitCode: 0 }),
+    downloadFile: async () => undefined,
     archiveDirectory: async () => {},
   },
   ios: {

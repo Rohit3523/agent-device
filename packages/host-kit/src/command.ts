@@ -7,6 +7,7 @@ export {
   execFailureDetails,
   type ExecOptions,
   type ExecResult,
+  type ExecStreamOptions,
   isCommandTimeoutError,
   isExecutablePath,
   requireExecSuccess,
@@ -22,4 +23,3 @@ export {
   withCommandExecutorOverride,
   withoutCommandExecutorOverride,
 } from './internal/exec.ts';
-export { shellQuote, shellQuoteIfNeeded } from './internal/shell-quote.ts';

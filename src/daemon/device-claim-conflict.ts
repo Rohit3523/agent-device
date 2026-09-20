@@ -5,7 +5,7 @@ import {
 } from '@agent-device/kernel/device';
 import { AppError } from '@agent-device/kernel/errors';
 import { runtimeOwnerKey, type RuntimeOwnerRef } from '@agent-device/contracts/platform-runtime';
-import { shellQuoteIfNeeded } from '@agent-device/host-kit/command';
+import { shellQuoteIfNeeded } from '@agent-device/kernel/device-shell';
 import type { AllocatorHeldClaimAdmission } from './device-claim-allocator.ts';
 import { canonicalLocalDeviceKey } from './device-claim-paths.ts';
 import { deviceClaimIdentity } from './device-claims.ts';
@@ -16,22 +16,8 @@ import {
   type InspectedDeviceClaim,
 } from './device-claim-inspection.ts';
 import type { DaemonResponse } from './daemon-request.ts';
-import { errorResponse } from './response.ts';
-
-export type DeviceClaimConflictReason =
-  | 'DEVICE_CLAIM_LIVE_OWNER'
-  | 'DEVICE_CLAIM_RECOVERY_PENDING'
-  | 'DEVICE_CLAIM_OWNER_UNCERTAIN';
-
-const DEVICE_CLAIM_CONFLICT_REASONS = new Set<DeviceClaimConflictReason>([
-  'DEVICE_CLAIM_LIVE_OWNER',
-  'DEVICE_CLAIM_RECOVERY_PENDING',
-  'DEVICE_CLAIM_OWNER_UNCERTAIN',
-]);
-
-export function isDeviceClaimConflictReason(value: unknown): value is DeviceClaimConflictReason {
-  return DEVICE_CLAIM_CONFLICT_REASONS.has(value as DeviceClaimConflictReason);
-}
+import { errorResponse } from '@agent-device/kernel/contracts';
+import type { DeviceClaimConflictReason } from '@agent-device/contracts/device';
 
 /**
  * The reason of the allocator-held arm's refusal when no allocator-held claim

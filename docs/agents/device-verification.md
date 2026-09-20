@@ -59,6 +59,30 @@ behavior, and xctestrun build/cache logic stays outside request execution.
 - If cleanup cannot be completed, report the remaining session name, state dir, and the
   `device status --stale` output as a blocker.
 
+## Foldable Apple devices
+
+Read ADR 0025 before changing capture behavior on a multi-panel device. The iOS 27.1 runtime ships
+only with the Xcode that carries it, and `xcode-select` may point at an older one, so pin the
+toolchain per command:
+`DEVELOPER_DIR=<Xcode-27.1>/Contents/Developer xcrun devicectl device info displays --device <udid>`.
+
+- Panels: that command lists each integrated panel with `backlightState`. Only the lit panel is
+  capturable — a capture of the dark panel exits 0 and writes an all-black PNG.
+- Pose is not scriptable. Ask the operator to fold or open the device in Device Hub, then
+  re-snapshot; refs and coordinates do not survive the pose change.
+- When a recording must show touches, assume it cannot. The touch-overlay exporter loses the track
+  geometry whenever it has touch events to draw — `220x480` on a plain iPhone 17 as well as on the
+  inner panel — and returns all-black frames on long clips, always with exit 0. Record with
+  `record start --hide-touches` and make the interaction legible through its on-screen effect
+  (typed text, navigation, a counter) instead of a cursor. The raw `simctl` capture behind it is
+  correct. See ADR 0025 and #2707.
+- An app must adopt the UIScene lifecycle to launch on iOS 27.1 at all: a legacy
+  `UIApplicationDelegate` app traps at launch inside
+  `___UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption`, which reads like a broken
+  device but is not one.
+- The 27.1 runtime in this beta accepts only the `iPhone Duo` device type, so a second non-foldable
+  27.1 simulator cannot be created as a control.
+
 ## Sandboxed environments
 
 The daemon binds localhost. If the sandbox rejects the listener with `listen EPERM`, rerun with

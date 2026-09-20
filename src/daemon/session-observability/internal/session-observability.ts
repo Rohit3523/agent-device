@@ -13,8 +13,8 @@ import { uniqueStrings } from '@agent-device/kernel/collections';
 import { AppError, normalizeError } from '@agent-device/kernel/errors';
 import { appendAppLogMarker, clearAppLogFiles, getAppLogPathMetadata } from '../../app-log.ts';
 import type { AppLogAdmissionLedger } from '../../app-log-admission-ledger.ts';
-import type { AudioProbeAdmissionLedger } from '../../audio-probe-admission-ledger.ts';
-import type { PerfCaptureAdmissionLedger } from '../../perf-capture-admission-ledger.ts';
+import { type AudioProbeAdmissionLedger } from '@agent-device/capture-kit/audio-probe-admission-ledger';
+import { type PerfCaptureAdmissionLedger } from '@agent-device/capture-kit/perf-capture-admission-ledger';
 import { appLogResourceStore } from '../../app-log-resource-store.ts';
 import {
   adoptStartedSessionAppLog,
@@ -32,10 +32,10 @@ import type {
 import type { SessionStore } from '../../session-store.ts';
 import type { DaemonRequest, DaemonResponse } from '../../daemon-request.ts';
 import type { SessionState } from '../../session-state.ts';
-import { errorResponse, type DaemonFailureResponse } from '../../response.ts';
 import { handleAudioCommand } from './session-audio.ts';
 import { handlePerfRuntimeCommand } from './session-perf-runtime.ts';
 import { handleNetworkCommand } from './session-network.ts';
+import { type DaemonFailureResponse, errorResponse } from '@agent-device/kernel/contracts';
 
 export type SessionObservabilityCommandInput = {
   req: DaemonRequest;

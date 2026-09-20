@@ -16,6 +16,45 @@
   `simctl privacy help` probe and the `privacy help` spawn before the first permission change.
   iOS `all` still does not cover notifications: current runtimes have no notifications service,
   so a targeted notifications change fails loudly and `all` leaves it unchanged.
+- Added (limrun): `record start` and `record stop` on Limrun iOS and Android direct sessions. The
+  runtime declared recording unavailable although the Limrun SDK exposes a server-side recorder.
+  Start asks the instance to record (`--quality medium` maps to Limrun quality 5, `high` to 8);
+  stop asks the instance to stop once, then downloads the served MP4 to the output path as a
+  separate bounded step, so a dropped transfer is retried by the next `record stop` without a
+  second remote stop. The capture is always the whole simulator or emulator screen; `--fps` and
+  `--hide-touches` are refused, and a recording cannot be reattached after a daemon restart. The
+  web recorder now shares the same transport-recording runtime.
+- Added (ios): `action-button` presses the iPhone or iPad Action Button once, and `client.command.actionButton()`
+  does the same. XCUITest exposes `XCUIDevice.press(.action)` with no hold-duration overload, so there is no
+  `long-press` and no `--duration-ms`, and the slide surface on the same edge is Camera Control, which this
+  command does not drive. The press is dispatched without the runner's app-activation preflight and with no
+  post-action observation, so the session app keeps the state the press found; the runner asks the device for
+  the button with `hasHardwareButton(.action)` and refuses with `UNSUPPORTED_OPERATION` on a model that has
+  none, and Android, HarmonyOS, Vega, Linux, web, tvOS, macOS, and visionOS each state their own refusal.
+  Simulators run no Shortcuts or App Intents, so what a press triggers is verifiable only on a physical
+  iPhone (#2699).
+- Fixed (android): `clipboard read` and `clipboard write` stop reporting success on a build whose
+  clipboard service has no shell command. Android 16 (API 36) answers every `adb shell cmd clipboard …`
+  with the framework default `Binder.handleShellCommand` — `No shell command implementation.` on
+  stderr and exit status 0 — and the exit status was consulted first, so a read reported `text: ""`,
+  a write reported "Clipboard updated", and `capabilities` advertised `clipboard` on a clipboard no
+  adb call ever touched. The response is now classified per stream into one typed verdict shared by
+  both legs and the capability probe: the service's own sentence on `stderr` outranks a clean exit
+  (a service that never ran wrote no payload to `stdout`), while `stdout` stays payload until the call
+  has failed. Such a device now refuses with `UNSUPPORTED_OPERATION` and a hint naming the substitute,
+  and the exported `readAndroidClipboardWithAdb` / `writeAndroidClipboardWithAdb` helpers reject
+  instead of resolving an empty string or nothing at all (#2674).
+- Fixed (limrun): `screenshot` on Limrun iOS direct sessions writes a PNG. Limrun serves its capture
+  as JPEG and the interactor wrote those bytes straight to the `.png` path, so every capture failed
+  downstream with "Screenshot file is not a valid PNG". The bytes are now sniffed and a JPEG is
+  transcoded to PNG before it is written; a PNG passes through unchanged.
+- Changed (ios): a regular `snapshot --depth N` on the XCTest runner is a presentation cut over a
+  full acquisition, not a bound on the walk. Acquisition publishes the frames the platform reported,
+  one normalization pass turns geometry into the app's orientation space and recomputes `hittable`,
+  and the visibility fold and depth cut run on that array. Presented trees are unchanged on the
+  screens measured; a boundary container under `--depth N` now carries its scroll hints from its real
+  children. The runner's regular-depth capability is `presentation-cut` (was `presented-frontier`),
+  and every `CGRect` becomes a `SnapshotRect` through one initializer (#2661).
 - Fixed (daemon): `close` now stops an active app-log stream (and audio probe / perf capture /
   recording) on an implicitly cwd-scoped session. Teardown addressed those resources by
   `session.name` (`default`) instead of the store address (`cwd:<hash>:default`), so the record
@@ -33,6 +72,24 @@
   (a disabled title field presented as an enabled Button for the whole row) no longer carries the
   field's `hittable: false`; on the XCTest runner path that Button now counts as interactive and
   becomes a Maestro atomic-dispatch candidate where it was excluded before.
+- Fixed (ios): a landscape iPhone snapshot reports the system keyboard's rects in the app's own
+  orientation space. iOS hosts `UIRemoteKeyboardWindow` in the device's native portrait space, so its
+  whole subtree arrived quarter-turned — a key measured 45 pt wide and 72 pt tall at `x 154` in an
+  874 x 402 app, drawing a strip down the left edge where the screenshot shows a 724 x 204 band
+  docked at `y 198`. Rules that read those numbers refused app content the keyboard was nowhere near
+  and let a tap land on a key. The Apple runner now reads the app's interface orientation at capture
+  time and publishes every rect under a turned surface host in the app's space, using the exact
+  inverse of the rotation its synthesized touches already rotate through, so a reported rect and a
+  performed tap cannot disagree about which pixel is which. The Simulator AX bridge reader has no
+  interface orientation in its attribute set, so it refuses a capture holding a surface host reporting
+  the app box quarter-turned — `Simulator AX snapshot unavailable
+  (window-coordinate-space-unresolved); used XCTest for this capture, which reports captured geometry
+  in the app's own orientation space.` — and the route sends that one capture to the runner instead of
+  retiring the app generation, so the next capture of a healthy app still uses the bridge. One table
+  proves both languages apply one rule: `contracts/fixtures/window-coordinate-space.json` (#2612).
+- Changed (ios): the rotation table and the coordinate-space rule moved from the XCTest runner bundle
+  into the `AgentDeviceSnapshotPresentation` package, where `swift test` replays the golden table
+  without a simulator. No behaviour change.
 - Added (limrun): `longpress` on Limrun iOS direct sessions. The interactor refused it as
   unsupported although the SDK exposes the HID primitives; it now holds one touch as a
   `performActions` batch of `touchDown`, `wait`, `touchUp`, defaulting to the 800 ms the Android
@@ -119,6 +176,30 @@
   option → flag round trip and its allowlist carried nothing. Older manifests that still contain
   the field parse unchanged; the field is ignored. The adb provider `install` capability now takes
   only `replace` (#2364).
+- Changed (android, harmonyos): every `adb shell`, `adb exec-out`, and `hdc shell` command now goes
+  through one device-shell funnel that renders each argument for the quoting its transport applies
+  (#2026, #2611). The device shell re-parses the arguments it is handed, so an unquoted dynamic value
+  was a command injection: Android quoted a few sites by hand and HarmonyOS quoted none. The two
+  transports do not quote alike, which is why a caller names the transport (`'adb'` or `'hdc'`) rather
+  than choosing quoting. `adb` escapes nothing, so a word reaches the device inside whatever quotes it
+  is given. `hdc` wraps every element it forwards in double quotes, where a single quote is inert while
+  `$`, a backquote, and `"` stay live: on a nova 14, `fill` text containing `$(id)` came back as the
+  device's own `id` output and a `"` in the text ended its argument, so words on that transport are
+  escaped instead of wrapped. Four effects are visible on a device. HarmonyOS `type` and `fill` text now
+  reaches `uitest uiInput inputText` byte-identical, confirmed with a payload carrying quotes, a command
+  substitution, a pipe, and a redirection. On Android an empty argument renders as `''` rather than
+  vanishing from the command, so a command that read its own shift and its operand as two words no
+  longer misaligns; HDC drops an empty element on the way to the device and cannot carry one, so it is
+  refused with `details.reason` `hdc-empty-word-unsupported`, as is a script fragment, which could only
+  arrive there as literal text. A script body handed to `sh -c` on the adb transport arrives as one
+  argument. Custom adb executors and providers (SDK, MCP, and relay transports such as Limrun's) that
+  pass a raw `['shell', …]` or `['exec-out', …]` argv are now refused with `INVALID_ARGS` and
+  `details.reason` `unguarded-device-shell-argv`, because a command the transport is about to let the
+  device parse has to be one the funnel built. Build it with `runAndroidShell` / `runAndroidExecOut`
+  (a `DeviceInfo`) or `runAdbShell` / `runAdbExecOut` (an `AndroidAdbExecutor`), all exported from
+  `agent-device/android-adb`, and pass each dynamic value as its own word. SDK: `AndroidAdbExecutor`
+  and `AndroidAdbProvider.exec` now receive `readonly string[]`, so a custom executor annotated
+  `(args: string[])` must widen its parameter to take the command.
 - Fixed: BrowserStack sessions honour `--provider-project`, `--provider-build`, and
   `--provider-session-name`. The capability builder emitted the legacy JSON Wire keys `device`,
   `os_version`, and `app` at the top level next to the W3C `bstack:options` block; the hub treats a

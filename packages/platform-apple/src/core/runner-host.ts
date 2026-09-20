@@ -8,8 +8,8 @@ import {
   runCmdBackground,
   runCmdStreaming,
   runCmdSync,
-  shellQuote,
 } from '@agent-device/host-kit/command';
+import { shellQuote } from '@agent-device/kernel/device-shell';
 import { emitDiagnostic, withDiagnosticTimer } from '@agent-device/host-kit/diagnostics';
 import {
   isProcessAlive,
@@ -51,6 +51,12 @@ import { readApplePlistJson, runAppleToolCommand, runXcrun } from './tool-provid
  * production composition module (`runner-client.ts`) and by the vitest
  * `apple-runner` project setup, which installs the same capabilities as
  * overridable test defaults.
+ *
+ * Names only -- `AppleRunnerHost` derives every signature from the owning module, and naming each
+ * import keeps the bundler shaking the rest of those modules away. Spreading the modules whole
+ * instead would drop this list, at the cost of putting all of their exports on the host object at
+ * runtime (measured: 41 members to 128, +1.8 kB shipped, including a vitest-only memo reset) and
+ * making a name shared by two of them silently rebind a capability.
  */
 export const appleRunnerHost: AppleRunnerHost = {
   runCmdStreaming,

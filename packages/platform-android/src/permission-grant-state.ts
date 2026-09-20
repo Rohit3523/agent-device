@@ -1,5 +1,5 @@
 import type { DeviceInfo } from '@agent-device/kernel/device';
-import { runAndroidAdb } from './adb.ts';
+import { runAndroidShell } from './adb.ts';
 
 /**
  * Whether the app held a runtime permission immediately before a revoke.
@@ -35,7 +35,7 @@ export async function readAndroidPackagePermissions(
   appPackage: string,
   userId: number,
 ): Promise<AndroidPackagePermissions> {
-  const result = await runAndroidAdb(device, ['shell', 'dumpsys', 'package', appPackage], {
+  const result = await runAndroidShell(device, ['dumpsys', 'package', appPackage], {
     allowFailure: true,
   });
   if (result.exitCode !== 0) return { requested: undefined, grants: undefined };
@@ -57,7 +57,7 @@ type AndroidPackagePermissions = {
  * mutation therefore passes `--user` explicitly (#1796).
  */
 export async function readAndroidCurrentUserId(device: DeviceInfo): Promise<number | undefined> {
-  const result = await runAndroidAdb(device, ['shell', 'am', 'get-current-user'], {
+  const result = await runAndroidShell(device, ['am', 'get-current-user'], {
     allowFailure: true,
   });
   if (result.exitCode !== 0) return undefined;

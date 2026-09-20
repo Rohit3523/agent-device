@@ -1,5 +1,5 @@
 import type { SessionAction } from '@agent-device/contracts/session';
-import type { ResponseLevel } from '@agent-device/kernel/contracts';
+import { type DaemonResponse, type ResponseLevel } from '@agent-device/kernel/contracts';
 import type { DaemonError } from '@agent-device/kernel/errors';
 import type { Platform, PublicPlatform } from '@agent-device/kernel/device';
 import type { SnapshotNode } from '@agent-device/kernel/snapshot';
@@ -10,7 +10,7 @@ import {
   readNodeStructuralDenotation,
   type LocalIdentity,
 } from '@agent-device/ad-script';
-import type { TargetAnnotationV1 } from '@agent-device/contracts/replay';
+import type { ReplayObservationEvidence, TargetAnnotationV1 } from '@agent-device/contracts/replay';
 import type {
   AdReplayScrubValue,
   AdReplayTargetBindingEvidence,
@@ -30,11 +30,8 @@ import {
 } from '@agent-device/contracts/replay';
 import { resolveTargetIdentityVerification } from '@agent-device/command-registry/registry';
 import { parseWaitPositionals } from '@agent-device/command-registry/wait-positionals';
-import type { DaemonResponse } from '../../daemon-request.ts';
-import type { SessionState } from '../../session-state.ts';
-import type { ReplayResumeStamper } from '../../session-replay-coordinator.ts';
-import type { InternalObservationEvidence } from '../../internal-observation.ts';
-import { boundedLocalIdentity } from '../../session-target-evidence.ts';
+
+import { boundedLocalIdentity } from '@agent-device/selectors/target-evidence';
 import {
   buildDivergenceScreen,
   captureDivergenceObservation,
@@ -43,7 +40,12 @@ import {
   type DivergenceObservation,
 } from './session-replay-divergence.ts';
 import { boundReplayDivergenceForSession } from './session-replay-divergence-publication.ts';
-import type { ReplaySessionObservationStore, ReplaySessionStore } from './command-types.ts';
+import type {
+  ReplayResumeStamper,
+  ReplaySessionObservation,
+  ReplaySessionState,
+  ReplaySessionStore,
+} from './command-types.ts';
 import {
   computeReplayRepairHint,
   type ReplayRepairHintCapture,
@@ -111,9 +113,8 @@ export type TargetBindingDivergenceContext = {
   sourceLine: number;
   replayPath: string;
   artifactPaths: string[];
-  sessionName: string;
   sessionStore: ReplaySessionStore;
-  observationStore: ReplaySessionObservationStore;
+  observationStore: ReplaySessionObservation;
   /** #1478 P4b: the request's bound resume-stamping capability — never a second-constructed coordinator. */
   resumeStamper: ReplayResumeStamper;
   responseLevel: ResponseLevel | undefined;
@@ -142,7 +143,7 @@ type TargetBindingDivergenceBuilt = {
   causeMessage: string;
   causeHint?: string;
   screen: ReplayDivergence['screen'];
-  publicationEvidence?: InternalObservationEvidence;
+  publicationEvidence?: ReplayObservationEvidence;
   /** ADR 0012 decision 6, R3: the same capture `screen` was built from, for the `repairHint` container test. */
   repairCapture: ReplayRepairHintCapture;
 };
@@ -160,7 +161,6 @@ function buildTargetBindingDivergenceResponse(
     sourceLine,
     replayPath,
     artifactPaths,
-    sessionName,
     sessionStore,
     resumeStamper,
     responseLevel,
@@ -220,7 +220,6 @@ function buildTargetBindingDivergenceResponse(
   const bounded = boundReplayDivergenceForSession({
     sessionStore,
     observationStore: context.observationStore,
-    sessionName,
     divergence,
     responseLevel,
     evidence: built.publicationEvidence,
@@ -274,18 +273,16 @@ export function buildTargetBindingFailureResponse(
 }
 
 async function captureFreshObservation(params: {
-  session: SessionState | undefined;
-  sessionName: string;
-  observationStore: ReplaySessionObservationStore;
+  session: ReplaySessionState | undefined;
+  observationStore: ReplaySessionObservation;
   logPath: string;
   action: SessionAction;
   unavailableHint: string;
 }): Promise<DivergenceObservation> {
-  const { session, sessionName, observationStore, logPath, action, unavailableHint } = params;
+  const { session, observationStore, logPath, action, unavailableHint } = params;
   return session
     ? await captureDivergenceObservation({
         session,
-        sessionName,
         observationStore,
         logPath,
         action,
@@ -302,9 +299,8 @@ async function captureFreshObservation(params: {
 export async function buildRecordedUnverifiableFailureResponse(
   context: TargetBindingDivergenceContext,
   params: {
-    session: SessionState | undefined;
-    sessionName: string;
-    observationStore: ReplaySessionObservationStore;
+    session: ReplaySessionState | undefined;
+    observationStore: ReplaySessionObservation;
     logPath: string;
     action: SessionAction;
   },
@@ -339,9 +335,8 @@ export async function buildPostDispatchTargetBindingFailureResponse(
   context: TargetBindingDivergenceContext,
   evidence: AdReplayTargetBindingEvidence,
   params: {
-    session: SessionState | undefined;
-    sessionName: string;
-    observationStore: ReplaySessionObservationStore;
+    session: ReplaySessionState | undefined;
+    observationStore: ReplaySessionObservation;
     logPath: string;
     action: SessionAction;
   },
@@ -355,7 +350,7 @@ export async function buildPostDispatchTargetBindingFailureResponse(
 
 function publicationEvidenceFrom(
   observation: DivergenceObservation,
-): InternalObservationEvidence | undefined {
+): ReplayObservationEvidence | undefined {
   return observation.state === 'available' ? observation.evidence : undefined;
 }
 

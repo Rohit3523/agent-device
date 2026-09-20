@@ -1,8 +1,8 @@
 import { expect, test, vi } from 'vitest';
 
-vi.mock('./hdc.ts', () => ({ runHarmonyHdc: vi.fn() }));
+vi.mock('./hdc.ts', () => ({ runHarmonyShell: vi.fn() }));
 
-import { runHarmonyHdc } from './hdc.ts';
+import { runHarmonyShell } from './hdc.ts';
 import type { DeviceBinding } from '@agent-device/contracts/platform-runtime';
 import type {
   PlatformRuntimeHost,
@@ -29,7 +29,7 @@ test.each([
   ['device', device],
   ['emulator', { ...device, kind: 'emulator' as const }],
 ])('classifies the HarmonyOS %s runtime denominator', async (_name, runtimeDevice) => {
-  const hdc = vi.mocked(runHarmonyHdc);
+  const hdc = vi.mocked(runHarmonyShell);
   hdc.mockReset();
   hdc.mockImplementation(async (_device, args) => ({
     exitCode: 0,
@@ -95,6 +95,10 @@ test.each([
     expect(facts.operations[operation]).toEqual({ available: true });
     expect(binding.operations[operation]).toBeTypeOf('function');
   }
+  // The Action Button is iPhone/iPad hardware with no HarmonyOS control behind it, so it refuses
+  // even on the kinds the hdc-driven navigation gate admits.
+  expect(facts.operations.actionButton).toMatchObject({ available: false });
+  expect(binding.operations.actionButton).toBeUndefined();
   // Public orientation and TV-remote operations remain unavailable unconditionally.
   expect(facts.operations.setOrientation).toEqual({
     available: false,
@@ -138,7 +142,7 @@ test.each([
   ).resolves.toEqual([{ id: 'com.example.application', name: 'application' }]);
   expect(hdc).toHaveBeenCalledWith(
     runtimeDevice,
-    ['shell', 'bm', 'dump', '-a'],
+    ['bm', 'dump', '-a'],
     expect.objectContaining({ timeoutMs: 15_000 }),
   );
   await expect(binding.operations.appState?.()).resolves.toEqual({

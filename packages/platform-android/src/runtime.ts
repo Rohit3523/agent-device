@@ -48,6 +48,7 @@ import { tvRemoteRuntimeOperationFacts } from '@agent-device/contracts/tv-remote
 import type { DeviceInfo } from '@agent-device/kernel/device';
 import { createHostAudioProbeCaptureOperations } from '@agent-device/capture-kit';
 import { androidAudioProbeCaptureFact } from './audio-runtime.ts';
+import { ANDROID_CLIPBOARD_SHELL_COMMAND_UNAVAILABLE_HINT } from './clipboard-shell-response.ts';
 import { createAndroidPerfOperations } from './perf/runtime.ts';
 import { createAndroidAppLogRuntime } from './logs/runtime.ts';
 import { dumpAndroidNetworkTraffic } from './network/runtime.ts';
@@ -85,6 +86,16 @@ const keyboardKindUnavailable = Object.freeze({
 const hoverUnavailable = Object.freeze({
   available: false,
   reason: 'unsupported-platform-leaf',
+} as const);
+/**
+ * The Action Button is physical iPhone hardware with no Android key event behind it: `input
+ * keyevent` has no code that reaches a Shortcut the way an Action Button press does, so there is no
+ * adb path to admit here even on the kinds every other Android cell admits.
+ */
+const actionButtonUnavailable = Object.freeze({
+  available: false,
+  reason: 'unsupported-platform-leaf',
+  hint: 'action-button presses iPhone Action Button hardware; Android has no equivalent key event.',
 } as const);
 const headlessUnavailable = Object.freeze({
   available: false,
@@ -223,7 +234,7 @@ function androidTouchFact(device: DeviceInfo) {
 const clipboardShellUnavailable = Object.freeze({
   available: false,
   reason: 'owner-capability-missing',
-  hint: 'This Android build ships no shell implementation for the clipboard service, so adb cannot read or write the clipboard on it.',
+  hint: ANDROID_CLIPBOARD_SHELL_COMMAND_UNAVAILABLE_HINT,
 } as const);
 
 /**
@@ -350,6 +361,7 @@ export function createAndroidPlatformRuntime(host: PlatformRuntimeHost): Platfor
         // `app-switcher` shares `home`'s cell: one `input keyevent`, admitted wherever the
         // retired `ANDROID_ALL` bucket admitted it.
         ...appSwitcherRuntimeOperationFacts({ appSwitcher: androidTouchFact(device) }),
+        actionButton: actionButtonUnavailable,
         // The deep link opens through `am start`, admitted wherever the retired `ANDROID_ALL`
         // bucket admitted it.
         ...appEventRuntimeOperationFacts({ triggerAppEvent: androidTouchFact(device) }),

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { AppError } from '@agent-device/kernel/errors';
 import { IOS_SIMULATOR } from './device-fixtures.ts';
-import type { ExecResult } from '../host.ts';
+import type { ExecResult } from '@agent-device/host-kit/command';
 import type { RunnerSession } from '../runner-session.ts';
 import { appleRunnerTestHost } from '../test-host.ts';
 import { withAppleRunnerProvider } from '../runner-provider.ts';
@@ -95,7 +95,7 @@ function makeRunnerSession(port: number, sessionId = `wiring:${port}`): RunnerSe
     jsonPath: '/tmp/wiring.json',
     testPromise: new Promise<ExecResult>(() => {}),
     child: { pid: process.pid, exitCode: null },
-    ready: true,
+    state: 'ready',
   };
   return session;
 }
@@ -281,7 +281,7 @@ test.each([undefined, 'get', 'accept', 'dismiss'] as const)(
   'alert action %s selects startup readiness by mutation semantics',
   async (action) => {
     server = await startFakeRunnerServer({ alert: [{ kind: 'ok', data: {} }] });
-    seedSession(server.port).ready = false;
+    seedSession(server.port).state = 'starting';
 
     await runAppleRunnerCommand(IOS_SIMULATOR, { command: 'alert', action });
 

@@ -6,7 +6,6 @@ import type {
 import { resolveTargetDevice } from '@agent-device/device-selection/dispatch-resolve';
 import { createCommandSurfaceAgentDevice } from '../runtime-command-surface.ts';
 import { publicPlatformString } from '@agent-device/kernel/device';
-import { noActiveSessionError } from './response.ts';
 import type { SnapshotState, SnapshotNode } from '@agent-device/kernel/snapshot';
 import { createDaemonRuntimePolicy } from './runtime-policy.ts';
 import { createDaemonRuntimeSessionStore } from './runtime-session.ts';
@@ -28,7 +27,9 @@ import type { AndroidObservationAdapter } from '@agent-device/contracts/android-
 import type { PlatformResourceCleanup } from './platform-resource-cleanup.ts';
 import { getRequestSignal } from '@agent-device/host-kit/request';
 import { snapshotOptionsToFlags } from '../backend-snapshot-options.ts';
+import type { RequestActivationProof } from './capture-disclosure.ts';
 import { checkIsArgs } from '@agent-device/selectors';
+import { noActiveSessionError } from '@agent-device/kernel/contracts';
 
 export type SelectorRuntimeParams = {
   req: DaemonRequest;
@@ -39,6 +40,8 @@ export type SelectorRuntimeParams = {
   // Filled by the capture runtime with the snapshot each selector command actually consumed;
   // sessionless routes disclose from here because no session record stores the capture.
   consumedSnapshot?: { state?: SnapshotState };
+  /** The repair this request's own capture reported, when it captured at all (#2682). */
+  activationProof?: RequestActivationProof;
   signal?: AbortSignal;
   inspectFacts?: InspectDeviceRuntimeFacts;
   bindDevice?: BindDeviceRuntime;
@@ -90,6 +93,7 @@ async function resolveSelectorRuntimeDevice(
   requireSession: boolean,
 ): Promise<ResolvedSelectorDevice> {
   params.consumedSnapshot ??= {};
+  params.activationProof ??= {};
   const session = params.sessionStore.get(params.sessionName);
   if (!session && requireSession) return { ok: false, response: noActiveSessionError() };
   const device = session?.device ?? (await resolveTargetDevice(params.req.flags ?? {}));
@@ -167,6 +171,7 @@ function createSelectorBackend(params: SelectorRuntimeDeviceParams): AgentDevice
           sessionName,
           req,
           consumedSnapshot: params.consumedSnapshot,
+          activationProof: params.activationProof,
           logPath,
           capture: boundOperations.capture,
         });

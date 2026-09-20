@@ -11,6 +11,7 @@ import { commandRuntimeUseRequirements } from '@agent-device/command-registry/re
 import { createUnavailableRuntimeFactsForTest } from '../../__tests__/test-utils/runtime-operation-facts.ts';
 import { makeSession } from '../../__tests__/test-utils/session-factories.ts';
 import { makeSessionStore } from '../../__tests__/test-utils/store-factory.ts';
+import { resolveBoundActionButtonRuntime } from '../action-button-runtime.ts';
 import { resolveBoundAppSwitcherRuntime } from '../app-switcher-runtime.ts';
 import { resolveBoundBackRuntime } from '../back-runtime.ts';
 import { resolveBoundFocusRuntime } from '../focus-runtime.ts';
@@ -23,11 +24,11 @@ import type {
   InspectDeviceRuntimeFacts,
   RuntimeAdmissionBindings,
 } from '../request-runtime-binding.ts';
-import type { DaemonFailureResponse } from '../response.ts';
 import { dispatchSnapshotDiffViaRuntime } from '../snapshot-diff-runtime.ts';
 import { resolveBoundTvRemoteRuntime } from '../tv-remote-runtime.ts';
 import { resolveBoundTypeTextRuntime } from '../type-text-runtime.ts';
 import { resolveBoundViewportRuntime } from '../viewport-runtime.ts';
+import type { DaemonFailureResponse } from '@agent-device/kernel/contracts';
 
 type RuntimeOperation = RuntimeOperationKey<PlatformRuntimeOperations>;
 
@@ -79,6 +80,10 @@ export const conformedRuntimeBindings = {
   home: {
     resolve: async (device, bindings) =>
       refusable(await resolveBoundHomeRuntime({ device, ...bindings })),
+  },
+  'action-button': {
+    resolve: async (device, bindings) =>
+      refusable(await resolveBoundActionButtonRuntime({ device, ...bindings })),
   },
   'app-switcher': {
     resolve: async (device, bindings) =>

@@ -7,7 +7,6 @@ import type { WaitParsed } from '@agent-device/command-registry/wait-positionals
 import { absenceCaptureOptionError } from '@agent-device/selectors/absence-observation-errors';
 import { absenceCaptureOptionRefusal } from '@agent-device/selectors/absence-observation';
 import { parseVersionedRefPositional } from './ref-positionals.ts';
-import { errorResponse } from './response.ts';
 import { resolveRefStalenessWarning } from './session-snapshot.ts';
 import { resolveSessionDevice, withSessionlessRunnerCleanup } from './snapshot-session.ts';
 import { recordIfSession, stripResolutionPayload, toDaemonWaitData } from './selector-recording.ts';
@@ -25,11 +24,12 @@ import type { BindDeviceRuntime, InspectDeviceRuntimeFacts } from './request-run
 import type { DaemonRequest, DaemonResponse } from './daemon-request.ts';
 import type { SessionState } from './session-state.ts';
 import { maybeWaitTimeoutSurfaceResponse } from './wait-current-surface.ts';
-import { withSystemSurfaceDisclosure } from './system-surface-disclosure.ts';
+import { withCaptureDisclosures } from './capture-disclosure.ts';
 import {
   createSelectorRuntimeForDevice,
   type SelectorRuntimeParams,
 } from './selector-runtime-backend.ts';
+import { errorResponse } from '@agent-device/kernel/contracts';
 
 type DispatchWaitParams = SelectorRuntimeParams &
   Readonly<{ inspectFacts?: InspectDeviceRuntimeFacts; bindDevice?: BindDeviceRuntime }>;
@@ -54,6 +54,7 @@ export async function dispatchWaitViaRuntime(params: DispatchWaitParams): Promis
   // Wait builds its runtime directly (no createBoundSelectorRuntime), so the consumed-snapshot slot
   // must be initialized here too or sessionless waits have nowhere to report the capture from.
   params.consumedSnapshot ??= {};
+  params.activationProof ??= {};
   // A pure sleep consumes no capture, so it never earns the system-surface disclosure below.
   if (parsed.kind === 'sleep') {
     return await executeWaitRequest(
@@ -68,8 +69,8 @@ export async function dispatchWaitViaRuntime(params: DispatchWaitParams): Promis
   }
   // Both a satisfied wait and a timeout consumed the polled capture stored on the session:
   // when it is an occluding system surface, the outcome must disclose the occlusion.
-  return withSystemSurfaceDisclosure(
-    await withSessionlessRunnerCleanup(
+  return withCaptureDisclosures({
+    response: await withSessionlessRunnerCleanup(
       session,
       device,
       () =>
@@ -84,8 +85,9 @@ export async function dispatchWaitViaRuntime(params: DispatchWaitParams): Promis
         ),
       params.platformResourceCleanup,
     ),
-    consumedSessionSnapshot(params),
-  );
+    consumedTree: consumedSessionSnapshot(params),
+    activationProof: params.activationProof,
+  });
 }
 
 function parseWaitRequest(
@@ -179,7 +181,14 @@ async function executeWaitRequest(
   });
   const enrichedResponse = waitOperations
     ? await maybeWaitTimeoutSurfaceResponse(
-        { req, logPath: params.logPath, session, device, capture: waitOperations.capture },
+        {
+          req,
+          logPath: params.logPath,
+          session,
+          device,
+          capture: waitOperations.capture,
+          activationProof: params.activationProof,
+        },
         response,
       )
     : response;

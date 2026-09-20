@@ -23,6 +23,7 @@ enum CommandType: String, Codable {
   case home
   case rotate
   case appSwitcher
+  case actionButton
   case keyboardDismiss
   case keyboardReturn
   case alert
@@ -96,6 +97,14 @@ extension CommandType {
     // Runner-lifecycle commands: skip the app-activation preflight.
     case .recordStop, .uptime, .terminate, .targetReset, .shutdown:
       return CommandTraits(isInteraction: false, readOnly: .never, isLifecycle: true)
+
+    // A hardware press mutates, is not an element interaction, and is not runner-lifecycle. It stays
+    // outside the lifecycle group because that flag also exempts a command from the recorded-failure
+    // conversion, and this command has no settle or post-action observation, so that conversion is
+    // the only evidence the press landed. It skips the app-activation preflight on its own terms in
+    // `shouldSkipAppActivationPreflight`, the way `.alert` does (#2699, #2702 review).
+    case .actionButton:
+      return CommandTraits(isInteraction: false, readOnly: .never, isLifecycle: false)
 
     case .status:
       return CommandTraits(isInteraction: false, readOnly: .always, isLifecycle: true)
@@ -239,6 +248,28 @@ extension Response {
     payload.runnerMainThreadBusy = value
     return Response(ok: ok, data: payload, error: error)
   }
+
+  /// The serving command had to bring the bound app back to the foreground to answer at all.
+  /// Stamped on the response of that command, never on a later one (#2682). Only successful
+  /// responses carry it: a refusal is already the disclosure of a command that did not run.
+  func stampingTargetActivation(_ value: TargetActivationFactPayload) -> Response {
+    guard ok else { return self }
+    var payload = data ?? DataPayload()
+    payload.targetActivation = value
+    return Response(ok: ok, data: payload, error: error)
+  }
+}
+
+/// Foreground repair the runner performed while serving one command (#2682). `priorState` is the
+/// bound app's `XCApplicationState` raw value read BEFORE `XCUIApplication.activate()` ran, so the
+/// fact describes what was repaired rather than what the repair produced. `otherActiveApplicationPid`
+/// names the only other application holding an active accessibility session when exactly one existed
+/// — a liveness claim, not a foreground owner, since the private AX client exposes no ordering of
+/// `activeApplications`, resolves no bundle id for an arbitrary app, and reports only pids.
+struct TargetActivationFactPayload: Codable {
+  let reason: String
+  let priorState: Int
+  let otherActiveApplicationPid: Int?
 }
 
 struct DataPayload: Codable {
@@ -253,6 +284,10 @@ struct DataPayload: Codable {
   var snapshotQuality: SnapshotQuality?
   /// Set when the capture describes an in-place system surface, not the app itself (#2438).
   var systemSurface: SystemSurfaceProvenancePayload?
+  /// The keyboard band this capture measured, when the tier that answered reads keyboards at all
+  /// (#2660). Absent means the query-sweep or private-AX tier answered, and the daemon's tap guard
+  /// keeps deriving the band from the tree.
+  var keyboard: KeyboardBandFactPayload?
   var gestureStartUptimeMs: Double?
   var gestureEndUptimeMs: Double?
   var x: Double?
@@ -294,6 +329,17 @@ struct DataPayload: Codable {
   var completedSteps: Int?
   var failedStepIndex: Int?
   var sequenceResults: [SequenceStepResult]?
+  var targetActivation: TargetActivationFactPayload?
+}
+
+/// `kind` mirrors the TS `SnapshotKeyboardBandFact`: "visible" carries `frame`, "unmeasurable"
+/// carries `reason`, and "absent" carries nothing because there is nothing to say. `frame` is in the
+/// app's own orientation space — the same space `SnapshotGeometrySpace` publishes every node rect in
+/// — so the daemon compares it against node rects without transforming either side (#2660).
+struct KeyboardBandFactPayload: Codable, Equatable {
+  let kind: String
+  let frame: SnapshotRect?
+  let reason: String?
 }
 
 /// `kind` mirrors the TS `IosSystemSurfaceKind` (e.g. "web-auth").

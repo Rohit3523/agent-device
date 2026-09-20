@@ -6,20 +6,27 @@ import { beforeEach, test, vi } from 'vitest';
 import { SessionStore } from '../../../session-store.ts';
 import type { DaemonRequest, DaemonResponse } from '../../../daemon-request.ts';
 import { makeIosSession } from '../../../../__tests__/test-utils/session-factories.ts';
-import { runReplayTestCommand } from '../../index.ts';
+import {
+  replayInvokeOverDispatch,
+  runReplayTestCommand,
+  splitReplayCommandRequest,
+} from '../../index.ts';
 import { mkdtempForTestSync } from '../../../../__tests__/test-utils/tmp-dir.ts';
 import { replayScriptSourceBundleFor } from '../../../../__tests__/test-utils/replay-script-source.ts';
 import {
   unavailableBindDevice,
   unavailableBindExactDevice,
 } from '../../../__tests__/test-device-runtime-gateway.ts';
-import { createScreenRecordingAdmissionLedger } from '../../../screen-recording-admission-ledger.ts';
+import { createScreenRecordingAdmissionLedger } from '@agent-device/capture-kit/screen-recording-admission-ledger';
 import type { RecordRuntimeHandlerParams } from '../../../handlers/record-runtime.ts';
 import { createDurableResourceEnvelope } from '@agent-device/capture-kit';
 import { localRuntimeOwner } from '@agent-device/contracts/platform-runtime';
 import type { ScreenRecordingLiveHandle } from '@agent-device/contracts/screen-recording-runtime';
 import { createReplayTestVideoOwner } from '../../../handlers/session-replay-video-owner.ts';
-import { createReplaySession } from '../../../handlers/session-replay-command.ts';
+import {
+  createReplaySession,
+  replayDaemonDependencies,
+} from '../../../handlers/session-replay-command.ts';
 
 const recordRuntimeMocks = vi.hoisted(() => ({
   handleRecordCommand: vi.fn(),
@@ -272,24 +279,24 @@ test('test finalizes replay video exactly once when cancellation arrives after s
   if (!video) throw new Error('Expected replay video owner');
 
   const responsePromise = runReplayTestCommand({
-    request,
+    ...splitReplayCommandRequest(request),
     session: createReplaySession('default', path.join(root, 'daemon.log'), sessionStore),
     createSession: (sessionName, logPath) =>
       createReplaySession(sessionName, logPath, sessionStore),
     video,
     cleanupSession: async () => {},
-    invoke: async (nestedReq) => {
+    dependencies: replayDaemonDependencies,
+    invoke: replayInvokeOverDispatch(async (nestedReq) => {
       nestedRequests.push(nestedReq);
       if (nestedReq.command === 'open') {
         const provisionalSession = makeIosSession(nestedReq.session);
         sessionStore.set(nestedReq.session, provisionalSession);
-        const hookResponse =
-          await nestedReq.internal?.openLifecycle?.beforeDispatch?.(provisionalSession);
+        const hookResponse = await nestedReq.internal?.openLifecycle?.beforeDispatch?.();
         if (hookResponse && !hookResponse.ok) return hookResponse;
         events.push('open:dispatch');
       }
       return { ok: true, data: { session: nestedReq.session } };
-    },
+    }, request),
   });
   await vi.advanceTimersByTimeAsync(4_000);
   const response = await responsePromise;

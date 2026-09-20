@@ -1,5 +1,4 @@
 import type { ResolvedGenericExecution } from './request-generic-dispatch.ts';
-import { errorResponse } from './response.ts';
 import { resolveBoundFocusRuntime } from './focus-runtime.ts';
 import { resolveScreenshotGenericExecution } from './screenshot-runtime.ts';
 import { resolveBoundScrollRuntime } from './scroll-runtime.ts';
@@ -10,9 +9,11 @@ import type { SessionState } from './session-state.ts';
 import { resolveBoundViewportRuntime } from './viewport-runtime.ts';
 import { resolveBoundBackRuntime } from './back-runtime.ts';
 import { resolveBoundHomeRuntime } from './home-runtime.ts';
+import { resolveBoundActionButtonRuntime } from './action-button-runtime.ts';
 import { resolveBoundAppSwitcherRuntime } from './app-switcher-runtime.ts';
 import { resolveBoundOrientationRuntime } from './orientation-runtime.ts';
 import { resolveBoundTvRemoteRuntime } from './tv-remote-runtime.ts';
+import { errorResponse } from '@agent-device/kernel/contracts';
 
 /**
  * The generic route's runtime-owned leaves (ADR 0019). Each one admits its own exact owner facts
@@ -72,6 +73,12 @@ export async function resolveGenericRuntimeExecution(
       });
     case 'app-switcher':
       return await resolveBoundAppSwitcherRuntime({
+        device: params.session.device,
+        inspectFacts: params.inspectFacts,
+        bindDevice: params.bindDevice,
+      });
+    case 'action-button':
+      return await resolveBoundActionButtonRuntime({
         device: params.session.device,
         inspectFacts: params.inspectFacts,
         bindDevice: params.bindDevice,

@@ -13,6 +13,7 @@ import {
   snapshotOptionsFromFlags,
   type RawSnapshotNode,
   type SnapshotCaptureProvenance,
+  type SnapshotKeyboardBandFact,
   type SnapshotState,
 } from '@agent-device/kernel/snapshot';
 import { resolveRefLabel } from '@agent-device/capture-kit/snapshot-node-lookup';
@@ -25,7 +26,7 @@ import { resolveDeferredInteractionOutcome } from './deferred-interaction-outcom
 import { createInteractionRetryTap } from './interaction-retry-tap.ts';
 import type { SessionState } from './session-state.ts';
 import type { BindDeviceRuntime, InspectDeviceRuntimeFacts } from './request-runtime-binding.ts';
-import { errorResponse, type DaemonFailureResponse } from './response.ts';
+import { type DaemonFailureResponse, errorResponse } from '@agent-device/kernel/contracts';
 
 type CaptureSnapshotParams = {
   device: SessionState['device'];
@@ -56,6 +57,8 @@ type SnapshotData = {
   nodes?: RawSnapshotNode[];
   truncated?: boolean;
   quality?: unknown;
+  /** The keyboard band the capture's producer measured (#2660), carried to the state guards read. */
+  keyboard?: SnapshotKeyboardBandFact;
 } & Omit<SnapshotCaptureAnnotations, 'quality'> &
   SnapshotCaptureProvenance;
 

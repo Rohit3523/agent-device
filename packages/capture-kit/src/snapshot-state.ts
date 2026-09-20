@@ -8,9 +8,11 @@ import {
   attachRefs,
   buildSnapshotPresentationKey,
   snapshotPresentationOptionsFromFlags,
+  type IosTargetActivation,
   type RawSnapshotNode,
   type SnapshotBackend,
   type SnapshotCaptureProvenance,
+  type SnapshotKeyboardBandFact,
   snapshotStateProvenance,
   type SnapshotState,
 } from '@agent-device/kernel/snapshot';
@@ -45,6 +47,10 @@ export function buildSnapshotState(
     quality?: unknown;
     comparisonIdentity?: IosSnapshotComparisonIdentity;
     systemSurface?: IosSystemSurfaceProvenance;
+    /** Foreground repair this capture's own command performed (#2682). */
+    targetActivation?: IosTargetActivation;
+    /** The keyboard band the producer measured, carried to the state the tap guards read (#2660). */
+    keyboard?: SnapshotKeyboardBandFact;
   } & SnapshotCaptureProvenance,
   flags:
     | (Pick<CommandFlags, 'snapshotDepth' | 'snapshotInteractiveOnly' | 'snapshotRaw'> &
@@ -81,6 +87,8 @@ export function buildSnapshotState(
       ? { comparisonKey: iosSnapshotComparisonIdentityKey(data.comparisonIdentity) }
       : {}),
     ...(data.systemSurface ? { iosSystemSurfaceBundleId: data.systemSurface.bundleId } : {}),
+    ...(data.targetActivation ? { targetActivation: data.targetActivation } : {}),
+    ...(data.keyboard ? { keyboard: data.keyboard } : {}),
     presentationKey: buildSnapshotPresentationKey(snapshotPresentationOptionsFromFlags(flags)),
     // Only broad Android snapshots become freshness baselines. If the user asked for a scoped
     // or filtered view, preserve that output contract but avoid pretending it is safe for

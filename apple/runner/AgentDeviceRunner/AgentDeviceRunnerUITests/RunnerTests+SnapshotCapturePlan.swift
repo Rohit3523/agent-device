@@ -62,6 +62,10 @@ struct SnapshotBackendCapture {
   var customActions: SnapshotCustomActionCoverage? = nil
   var qualityPayload: DataPayload? = nil
   var timing: SnapshotCaptureTiming? = nil
+  /// The keyboard band this capture measured, carried beside the tree it came with (#2660). Only the
+  /// tree tier reads the keyboard, so only that tier has one; the daemon reads a missing band as "this
+  /// producer could not measure", which is exactly what the query-sweep and private-AX tiers did.
+  var keyboardBand: KeyboardBandFactPayload? = nil
 }
 
 extension RunnerTests {
@@ -416,6 +420,9 @@ extension RunnerTests {
     let hint = SnapshotPresentation.captureHint(for: options)
     var timer = SnapshotPhaseTimer()
     let acquisition: SnapshotAcquisition?
+    // The band is read inside the tree tier's own bounded work, so it has to be lifted out of the
+    // acquisition phase and carried to the stamping step, where the payload is assembled (#2660).
+    var keyboardBand: RunnerKeyboardBandFact?
     do {
       acquisition = try timer.measure(.acquisition) {
         switch kind {
@@ -430,6 +437,7 @@ extension RunnerTests {
           else {
             return nil
           }
+          keyboardBand = context.keyboardBand
           return try self.runMainThreadWork(
             "tree_processing",
             timeout: min(self.treeCaptureSliceBudget, max(0.5, deadline.timeIntervalSinceNow)),
@@ -437,7 +445,7 @@ extension RunnerTests {
           ) {
             hint.isRaw
               ? try self.rawTreeSnapshotAcquisition(context: context, hint: hint)
-              : self.recursiveTreeSnapshotAcquisition(context: context, hint: hint)
+              : try self.recursiveTreeSnapshotAcquisition(context: context, hint: hint)
           }
         case .querySweep:
           return try self.runMainThreadWork(
@@ -472,19 +480,30 @@ extension RunnerTests {
       )
     }
 
+    // The one coordinate-space pass (#2661): reported frames become the app's orientation space
+    // before presentation reads them. A backend with unknown orientation (the windowless sweep)
+    // turns nothing.
+    let normalizedAcquisition = acquisition.replacingNodes(
+      SnapshotGeometrySpace.normalized(
+        nodes: acquisition.nodes,
+        viewport: acquisition.viewport,
+        interfaceOrientation: acquisition.interfaceOrientation
+      )
+    )
+
     let presented: SnapshotBackendCapture
     do {
       presented = try timer.measure(.presentation) {
-        guard let result = try SnapshotPresentation.present(acquisition, options: options) else {
+        guard let result = try SnapshotPresentation.present(normalizedAcquisition, options: options) else {
           NSLog(
             "AGENT_DEVICE_RUNNER_SNAPSHOT_PROJECTION_MISMATCH requested=%@ acquired=%@",
             hint.projection.rawValue,
-            acquisition.hint.projection.rawValue
+            normalizedAcquisition.hint.projection.rawValue
           )
           throw Self.snapshotProjectionMismatchFailure(
             kind,
             requested: hint.projection,
-            acquired: acquisition.hint.projection
+            acquired: normalizedAcquisition.hint.projection
           )
         }
         return Self.makeSnapshotBackendCapture(from: result)
@@ -503,6 +522,7 @@ extension RunnerTests {
 
     var capture = presented
     capture.timing = timer.timing
+    capture.keyboardBand = keyboardBand?.payload
     return SnapshotBackendAttempt(
       outcome: .captured(capture),
       timing: timer.timing
@@ -641,6 +661,7 @@ extension RunnerTests {
         return SnapshotQualityPayload(nodes: nodes, truncated: quality.truncated == true)
       },
       snapshotQuality: quality,
+      keyboard: capture.keyboardBand,
       runnerFatal: payload.runnerFatal,
       runnerFatalReason: payload.runnerFatalReason
     )
@@ -735,7 +756,7 @@ extension RunnerTests {
         label: label,
         identifier: identifier,
         value: nil,
-        rect: snapshotRect(from: .zero),
+        rect: SnapshotRect(.zero),
         enabled: true,
         focused: nil,
         selected: nil,

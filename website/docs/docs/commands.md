@@ -53,6 +53,7 @@ agent-device home
 agent-device orientation portrait
 agent-device orientation landscape-left
 agent-device app-switcher
+agent-device action-button
 ```
 
 - `boot` ensures the selected target is ready without launching an app.
@@ -70,6 +71,7 @@ agent-device app-switcher
 - Android: `shutdown --platform android --device <avd-name>` stops a running emulator.
 - `open [app|url] [url]` already boots/activates the selected target when needed.
 - `open <app> --timeout <ms>` is a startup budget for that boot. A never-booted iOS Simulator runs Apple's first-boot migration, which can take several minutes; without the flag the boot wait is capped at 120 seconds. When the budget runs out the command fails with `error.details.reason: boot_timeout` and the Simulator keeps booting, so a retry finds it further along.
+- `open <app> --wait <ms>` waits up to that budget for a device another session is holding instead of failing at once. The open reports each poll, then either opens the device or fails with `DEVICE_IN_USE` naming the owning session and saying the budget was spent. A wait that finds the device taken again keeps waiting for the rest of its budget, so several opens can queue on one device and none of them is refused before its budget is spent. Only session contention is waited for: a device claim held by another workspace's daemon is never retriable and returns its recovery command immediately. The wait extends the command's timeout envelope, so a long budget does not need a longer `--timeout`.
 - `open <url>` deep links are supported on Android and iOS.
 - `open <app> <url>` opens a deep link on iOS.
 - `open <app> --launch-console <path>` captures launch-time stdout/stderr for direct iOS simulator app launches. It is not valid for URL opens or
@@ -81,6 +83,12 @@ agent-device app-switcher
 - `back --system` asks for system back input explicitly. On Android this is the normal back keyevent. On iOS and tvOS it uses the platform back gesture or Siri Remote menu action. On macOS, where there is no generic system back input, `back --system` reports unavailable instead of falling back to app-owned navigation.
 - `orientation <orientation>` forces a mobile device into `portrait`, `portrait-upside-down`, `landscape-left`, or `landscape-right`.
 - `orientation` is supported on iOS and Android mobile targets. macOS and tvOS do not expose it.
+- `action-button` presses the iPhone Action Button once through the Apple runner. It takes no arguments and no `--duration-ms`: XCUITest exposes the press without a hold duration, so a long press is not expressible. The slide surface on the same edge belongs to Camera Control, which `action-button` does not drive.
+- `action-button` is an iPhone and iPad command. Android, web, Linux, HarmonyOS, and Vega refuse it, and so do tvOS, macOS, and visionOS leaves.
+- `action-button` asks the device whether it has the button before pressing it. A target whose model has none — an iPhone SE beside an iPhone 15, or most iPad simulators — fails with `UNSUPPORTED_OPERATION` rather than reporting a press that never happened.
+- `action-button` does not activate or relaunch the session's app, and it takes no `--settle`: pressing a hardware button is not a navigation, so the app stays where it was.
+- `action-button` reports that the press was dispatched, not what the system did with it. Simulators run no Shortcuts and no App Intents, so what a press triggers can only be verified on a physical iPhone; on a Simulator the command proves the press was accepted and that the session app was not brought forward.
+- `action-button` is not a cheap command to loop. On an iPhone 17 Pro Simulator the press itself spent about five seconds inside XCUITest, while `home` and `app-switcher` on the same session took under two seconds each.
 - On iOS devices, `http(s)://` URLs open in Safari when no app is active. Custom scheme URLs require an active app in the session.
 - Commands that need one concrete device refuse to guess: if no `--device`/`--udid`/`--serial` is given and several candidates are equally preferred (for example two booted emulators), the command fails with `AMBIGUOUS_MATCH` and lists them, rather than picking one and returning a successful answer about a device you did not select. Preferences still apply first — virtual over physical, booted over offline — so one booted emulator beside offline ones resolves normally, as does any command running inside an existing session. `devices` lists everything as before.
 - Commands that omit `--session` use an implicit `default` session scoped to the caller's current git worktree or working directory. This keeps independent local agents from accidentally attaching to each other's default session.
@@ -316,7 +324,7 @@ agent-device snapshot -i --platform apple --target desktop
 - In macOS app sessions, `screenshot` captures the target app window bounds rather than the full desktop.
 - Prefer selector or `@ref`-driven interactions on macOS. Window position can shift between runs, so raw x/y point commands are less stable than snapshot-derived targets.
 - Use `click --button secondary` for context menus on macOS, then run `snapshot -i` again.
-- Mobile-only helpers remain unsupported on macOS: `boot`, `shutdown`, `home`, `orientation`, `app-switcher`, `install`, `reinstall`, `install-from-source`, and `push`.
+- Mobile-only helpers remain unsupported on macOS: `boot`, `shutdown`, `home`, `orientation`, `app-switcher`, `action-button`, `install`, `reinstall`, `install-from-source`, and `push`.
 
 Recommended loops:
 
@@ -750,8 +758,67 @@ agent-device apps --platform android --all
 ```
 
 - Android `appstate` reports live foreground package/activity.
-- iOS `appstate` is session-scoped and reports the app tracked by the active session on the target device.
+- iOS `appstate` is unavailable: the Apple target answers no sessionless foreground probe, and a session-scoped guess about the foreground is not a fact. The per-command answer arrives as the [`targetActivation` disclosure](#foreground-repairs-on-ios), and the refusal's hint says so.
 - `apps` shows user-installed apps by default. Use `--all` when you need the full inventory, including system/OEM apps.
+
+## Foreground repairs on iOS
+
+An iOS session is bound to one app, but the app can leave the foreground without the session knowing:
+a deep link, a system sheet, or a `simctl openurl` hands the screen to another app. When the next
+command arrives, the runner brings the session app back so the command can be answered at all, and
+that repair is disclosed on the command that paid for it rather than applied silently:
+
+```bash
+agent-device open com.example.app --platform ios
+agent-device screenshot --platform ios            # Safari screen
+agent-device snapshot -i --platform ios           # answers with the app's tree
+```
+
+The `snapshot` response carries `targetActivation` plus an appended `warnings` entry naming the
+state the session app was found in and why the runner activated it:
+
+```json
+{
+  "targetActivation": {
+    "reason": "bundle_changed",
+    "priorState": "runningBackground",
+    "otherActiveApplicationPid": 4562
+  }
+}
+```
+
+- Read it as: anything captured earlier in this session described the other app, not the session app.
+  Re-capture now, or drive the other app in its own session.
+- `otherActiveApplicationPid` is present only when exactly one application other than the session app
+  held an active accessibility session at that moment. It is a liveness claim, not a foreground owner:
+  the runner's probe reports no ordering, so nothing here proves which app owned the screen. Absent
+  means the runner could not isolate one candidate, which is not a failure.
+- `priorState` is the session app's state read before the runner activated it, so it names what was
+  repaired rather than what the repair produced. It is never `runningForeground`.
+- `reason` names the check that found the app out of foreground: `bundle_changed` when the runner's
+  cached session target differs from the bundle the command asked for, `stale_target` when the cached
+  target matches but no longer answers as foreground, `missing_after_wait` when a wait for the app
+  never observed it, and `interaction_foreground_guard` when an interaction's own foreground guard
+  tripped before dispatching.
+- The disclosure rides capture-consuming commands — `snapshot`, `find`, `get`, `is`, `wait`, and an
+  interaction whose target tree was captured for it — at every response level, including
+  `--level digest`. It is disclosed only for the command that paid for the repair: a read answered
+  from a cached or stored tree did no device work and reports no repair of its own.
+- In text mode the CLI prints every response warning as a `Warning:` line after the command's own
+  output, for every command — not only `snapshot`. Four commands declare their stdout to be the
+  value a caller pipes (`get`, `find`, `clipboard`, `record`) and print those lines on **stderr**
+  instead, so `value=$(agent-device get text …)` still captures exactly the value. `--json` keeps
+  them in `data.warnings` and writes neither line.
+- **Silence is not proof.** A command that consumes no capture — a coordinate `press`, a `press @ref`
+  answered from a live ref frame, or a `wait <text>` that its text observation answered on the first
+  poll — may still have had the runner re-activate the session app to serve it, and reports nothing:
+  the runner stamps that repair on the response, and the daemon decodes it only from a capture. A
+  `wait <text>` that timed out and re-activated while describing the surface does disclose. Do not
+  infer that the foreground held from a command that said nothing
+  ([#2694](https://github.com/callstack/agent-device/issues/2694) tracks closing that gap). When the
+  distinction matters, spend a `snapshot -i` and read its disclosure.
+- The warning is appended; staleness, snapshot-quality, and occluding-system-surface warnings that
+  came before it are never replaced.
 
 ## Clipboard
 
@@ -765,8 +832,9 @@ agent-device clipboard write ""   # clear clipboard
 - Treat `clipboard read` output as sensitive data; it can include secrets copied by the user or app.
 - `clipboard write <text>` updates clipboard text on the selected target.
 - Works with an active session device or explicit selectors (`--platform`, `--device`, `--udid`, `--serial`).
-- Supported on macOS, Android emulator/device, and iOS simulator.
+- Supported on macOS, iOS simulator, and Android builds whose clipboard service answers the `cmd clipboard` shell command.
 - iOS physical devices currently return `UNSUPPORTED_OPERATION` for clipboard commands.
+- Android reads and writes both go through `adb shell cmd clipboard`, which needs a build that implements that command. Android 16 (API 36) ships no implementation of it, so there both actions return `UNSUPPORTED_OPERATION` with a hint naming the substitute instead of an empty clipboard, and `capabilities` omits `clipboard`. Verify a copy flow on such a device by pasting into a focused field and reading that field back.
 
 ## Keyboard
 
@@ -967,6 +1035,7 @@ agent-device record stop                # Stop active recording
 - On iOS simulators, a busy CoreSimulator host recording slot makes `record start` return non-retriable `DEVICE_IN_USE` with `details.reason: apple_simulator_recording_busy`. Use `record stop` in the session that owns the active recording. If a previous recorder died and no recording is active, ask the host operator to restart the CoreSimulator stream service before retrying.
 - Android uses `adb shell screenrecord`, which has a 180s platform limit. `record start` publishes a durable device manifest. Longer recordings are split into MP4 chunks while the daemon stays alive; after daemon restart, `record stop` recovers only manifest-owned chunks and warns when gesture overlay telemetry was lost.
 - Android `screenrecord` encodes a frame only when the screen changes, so a clip ends at the last frame the recorder encoded instead of at `record stop`: a window that ends on an unchanged screen yields a shorter video, while every on-screen change inside the window stays at its real offset in it. `record stop` reports `durationMs` as host wall clock from `record start` until the export finished, and when the video can be measured it also reports `capturedDurationMs` and warns with how much of the window that video covers.
+- Limrun iOS and Android direct sessions record the whole simulator or emulator screen through the provider's server-side recorder, so every `--scope` captures the same frame and `--fps` and `--hide-touches` are refused with `INVALID_ARGS` before any device work. `record stop` asks the instance to stop once and then downloads the served MP4 to the output path; that download is bounded to end inside the request window, so a slow or dropped transfer ends typed, leaves no file behind, and is retried by the next `record stop` from the same URL while the instance lives. Nothing survives a daemon restart: the recording is `unreattachable` and the instance disposes the file when the lease is released.
 - `record stop` is safe to repeat. When its request window ends while the daemon is still exporting — typical for a long touch-overlay burn-in on a remote daemon — the export keeps running there, and a second `record stop` in the same session returns that completed recording, including the caller-side output path, without starting another recording. A finished recording whose video file is already gone reports `no active recording`.
 - A recording answers two independent questions, and `record stop` reports both: whether a playable export exists, and whether the recorder stopped. `recorder` is `confirmed` when the recorder exited or acknowledged a stop meant for this recording, and `lost` when the session holding it died — an Apple recording invalidated by a runner restart. `nativePathDisposition` says what became of the artifact path the recorder itself writes to: `retirable` while that file still sits there owed a removal, and `retired` once its removal was verified. Both are optional disclosures — the export is served either way, a replay of a recording stopped before they existed omits them, and so does a backend whose recorder writes the served file itself. The vocabulary is deliberately wider than today's answers: `recorder: unconfirmed` (a probe that could not be read, or no exit inside the stop budget), the identity-mismatch reasons under `lost`, and `nativePathDisposition: pending` are declared by [ADR 0024](https://github.com/callstack/agent-device/blob/main/docs/adr/0024-screen-recording-provable-signal.md) for the steps that gain those probes, and no stop reports them yet.
 
@@ -1047,7 +1116,7 @@ tail -50 ~/.agent-device/sessions/default/app.log
 - Physical iOS device capture is best-effort: dropped frames are expected and true 60 FPS is not guaranteed even with `--fps 60`.
 - Physical-device capture defaults to 15 FPS.
 - `--fps <n>` (1-120) applies to physical iOS device recording as an explicit FPS cap.
-- `--quality <medium|high>` controls recording output quality. Android maps it to `adb shell screenrecord --bit-rate`; Apple targets use it for export/encoding. `medium` is the default; pass `high` for evidence, release notes, or debugging visual artifacts. Legacy numeric values are still accepted for compatibility: `5`-`7` map to `medium`, and `8`-`10` map to `high`.
+- `--quality <medium|high>` controls recording output quality. Android maps it to `adb shell screenrecord --bit-rate`; Apple targets use it for export/encoding; Limrun sessions map it to the provider recorder's quality (`medium` to 5, `high` to 8). `medium` is the default; pass `high` for evidence, release notes, or debugging visual artifacts. Legacy numeric values are still accepted for compatibility: `5`-`7` map to `medium`, and `8`-`10` map to `high`.
 
 ## Tracing
 

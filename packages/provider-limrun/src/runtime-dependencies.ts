@@ -21,7 +21,7 @@ export type LimrunAdbCommandResult = {
 };
 
 export type LimrunAdbExecutor = (
-  args: string[],
+  args: readonly string[],
   options?: LimrunAdbCommandOptions,
 ) => Promise<LimrunAdbCommandResult>;
 
@@ -89,6 +89,8 @@ export type LimrunAndroidRuntimeAdapter = {
   getKeyboardState(adb: LimrunAdbExecutor): Promise<LimrunAndroidKeyboardState>;
   dismissKeyboard(adb: LimrunAdbExecutor): Promise<LimrunAndroidKeyboardDismissResult>;
   readLogs(adb: LimrunAdbExecutor, lineLimit: number): Promise<string>;
+  /** Stops the app so an install cannot inherit a running process. Tolerates a device that says no. */
+  forceStopApp(adb: LimrunAdbExecutor, packageName: string, signal?: AbortSignal): Promise<void>;
   /**
    * Addresses one device command at `serial`, the tunnel this provider opened. The serial is the
    * provider's own addressing decision and belongs to the target, so the command array the Android
@@ -110,6 +112,14 @@ export type LimrunAndroidRuntimeAdapter = {
   ): Promise<AppError>;
 };
 
+/** One authenticated HTTP download the host performs on the provider's behalf, bounded by `timeoutMs`. */
+export type LimrunFileDownload = Readonly<{
+  url: string;
+  headers: Readonly<Record<string, string>>;
+  destinationPath: string;
+  timeoutMs: number;
+}>;
+
 export type LimrunHostAdapter = {
   runAdb(
     invocation: AndroidAdbInvocation,
@@ -120,6 +130,7 @@ export type LimrunHostAdapter = {
     entryName: string;
     archivePath: string;
   }): Promise<void>;
+  downloadFile(options: LimrunFileDownload): Promise<void>;
 };
 
 export type LimrunIosRuntimeAdapter = {

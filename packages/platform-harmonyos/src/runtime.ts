@@ -275,6 +275,8 @@ export function createHarmonyPlatformRuntime(host: PlatformRuntimeHost): Platfor
         ...homeRuntimeOperationFacts({ home: harmonyFocusFact(device) }),
         // App switcher rides the same HDC-driven key input as home, so it shares that cell.
         ...appSwitcherRuntimeOperationFacts({ appSwitcher: harmonyFocusFact(device) }),
+        // HarmonyOS devices have no Action Button control for HDC to press.
+        actionButton: harmonyPlatformLeafUnavailable,
         // HarmonyOS has no trigger-app-event implementation.
         ...appEventRuntimeOperationFacts({ triggerAppEvent: harmonyPlatformLeafUnavailable }),
         // The HDC-driven settings surface shares the interaction kind gate.

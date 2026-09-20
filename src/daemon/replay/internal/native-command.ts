@@ -1,17 +1,10 @@
 import { asAppError } from '@agent-device/kernel/errors';
-import type { DaemonResponse } from '../../daemon-request.ts';
-import type { SessionState } from '../../session-state.ts';
-import { errorResponse } from '../../response.ts';
 import { runAdReplay } from '@agent-device/ad-replay';
 import type { SnapshotTimingSample } from '@agent-device/contracts/capture';
 import { summarizeSnapshotTimingSamples } from '@agent-device/contracts/capture';
 import type { ReplayCommandResult } from '@agent-device/contracts/replay';
 import { isMaestroYamlPath, maestroBackendRequiredMessage } from '@agent-device/ad-script';
 import { getRequestSignal } from '@agent-device/host-kit/request';
-import {
-  createReplayCoordinator,
-  type ReplayCoordinator,
-} from '../../session-replay-coordinator.ts';
 import {
   createAdReplayStepRuntime,
   type ReplayStepContext,
@@ -22,7 +15,13 @@ import {
   REPLAY_SCRIPT_SOURCE_REQUIRED_MESSAGE,
 } from '../../replay-script-source.ts';
 import { prepareReplaySession } from './session-replay-runtime-session.ts';
-import type { ReplayCommand, ReplaySessionStore } from './command-types.ts';
+import type {
+  ReplayCommand,
+  ReplayCoordinator,
+  ReplaySessionState,
+  ReplaySessionStore,
+} from './command-types.ts';
+import { errorResponse, type DaemonResponse } from '@agent-device/kernel/contracts';
 
 /**
  * #1555 P5 (decomposition): the replay request's own orchestration — routing, plan resolution,
@@ -58,7 +57,7 @@ import type { ReplayCommand, ReplaySessionStore } from './command-types.ts';
 export async function runReplayCommand(command: ReplayCommand): Promise<DaemonResponse> {
   const {
     request: req,
-    session: { name: sessionName, logPath, store: sessionStore, mutationStore, observationStore },
+    session: { name: sessionName, logPath, store: sessionStore, observationStore, coordinator },
     tracePath,
     onStep,
     invoke,
@@ -77,9 +76,6 @@ export async function runReplayCommand(command: ReplayCommand): Promise<DaemonRe
   // its own. Read below by the catch block, so a mid-loop exception still reports
   // the artifacts collected up to that point.
   const artifactPaths = new Set<string>();
-  // #1478 P4b: the one locked coordinator this request reaches the repair
-  // transaction and resume watermark through.
-  const coordinator = createReplayCoordinator({ sessionStore, mutationStore });
   try {
     resolved = bundle.entry;
     if (isMaestroYamlPath(resolved) && req.flags?.replayBackend !== 'maestro') {
@@ -100,6 +96,7 @@ export async function runReplayCommand(command: ReplayCommand): Promise<DaemonRe
       resolved,
       script: readReplayScriptSourceFile(bundle, resolved),
       coordinator,
+      dispatch: command.dispatch,
     });
     if (!planPreparation.ok) return planPreparation.response;
     const {
@@ -136,6 +133,8 @@ export async function runReplayCommand(command: ReplayCommand): Promise<DaemonRe
       invoke,
       signal: getRequestSignal(req.meta?.requestId),
       coordinator,
+      resolvedSessionScope: command.resolvedSessionScope,
+      dependencies: command.dependencies,
     };
     const { runtime, readLastResponse } = createAdReplayStepRuntime({
       ctx: stepContext,
@@ -266,7 +265,7 @@ function formatReplaySuccessMessage(replayed: number, wallClockMs: number): stri
 function requireLiveSessionForKeepSession(params: {
   keepSession: boolean;
   sessionName: string;
-  completedSession: SessionState | undefined;
+  completedSession: ReplaySessionState | undefined;
   artifactPaths: readonly string[];
 }): DaemonResponse | undefined {
   const { keepSession, sessionName, completedSession, artifactPaths } = params;

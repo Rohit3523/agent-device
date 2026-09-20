@@ -3,6 +3,7 @@ import {
   isRequestCanceledError,
   AppError,
 } from '@agent-device/kernel/errors';
+import { RUNNER_COMMAND_TRAIT_MANIFEST } from '../runner-command-manifest.ts';
 import type { RequestProgressEvent } from '@agent-device/contracts/progress';
 import { beforeEach, test, onTestFinished, vi } from 'vitest';
 import assert from 'node:assert/strict';
@@ -11,7 +12,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdtempForTest, mkdtempForTestSync } from './tmp-dir.ts';
 import { appleRunnerTestHost } from '../test-host.ts';
-import type { DiagnosticEventInput } from '../host.ts';
+import type { DiagnosticEventInput } from '@agent-device/host-kit/diagnostics';
 
 const mockRunCmdStreaming = vi.fn();
 const mockRunCmdSync = vi.fn();
@@ -136,6 +137,7 @@ const runnerProtocolCommandFixtures: Record<RunnerCommand['command'], RunnerComm
   home: { command: 'home' },
   rotate: { command: 'rotate', orientation: 'landscape-left' },
   appSwitcher: { command: 'appSwitcher' },
+  actionButton: { command: 'actionButton' },
   keyboardDismiss: { command: 'keyboardDismiss' },
   keyboardReturn: { command: 'keyboardReturn' },
   alert: { command: 'alert', action: 'accept' },
@@ -311,43 +313,13 @@ test('resolveRunnerDestination uses simulator destination for simulators', () =>
 });
 
 test('runner protocol fixtures cover every runner command with JSON-safe samples', () => {
-  const commands = Object.keys(runnerProtocolCommandFixtures).sort();
-  assert.deepEqual(commands, [
-    'activate',
-    'alert',
-    'appSwitcher',
-    'back',
-    'backInApp',
-    'backSystem',
-    'desktopScroll',
-    'drag',
-    'findText',
-    'gesture',
-    'gestureViewport',
-    'home',
-    'keyboardDismiss',
-    'keyboardReturn',
-    'longPress',
-    'mouseClick',
-    'querySelector',
-    'readText',
-    'recordStart',
-    'recordStop',
-    'remotePress',
-    'rotate',
-    'screenshot',
-    'scroll',
-    'sequence',
-    'shutdown',
-    'snapshot',
-    'status',
-    'swipe',
-    'tap',
-    'targetReset',
-    'terminate',
-    'type',
-    'uptime',
-  ]);
+  // The trait manifest is the exhaustive runner-command enumeration — it is `satisfies
+  // Record<RunnerCommand['command'], …>` — so the fixture set is checked against that declaration
+  // instead of against a second hand-maintained list that a new command has to remember to update.
+  assert.deepEqual(
+    Object.keys(runnerProtocolCommandFixtures).sort(),
+    Object.keys(RUNNER_COMMAND_TRAIT_MANIFEST).sort(),
+  );
 
   const roundTrip = JSON.parse(JSON.stringify(runnerProtocolCommandFixtures)) as Record<
     string,
@@ -497,7 +469,7 @@ test('parseRunnerResponse preserves runner unsupported-operation codes', async (
       },
     }),
   );
-  const session = { ready: false };
+  const session = { state: 'starting' } as const;
 
   await assert.rejects(
     () => parseRunnerResponse(response, session, '/tmp/runner.log'),
@@ -523,7 +495,7 @@ test('parseRunnerResponse surfaces the keyboard-dismiss hint naming the occlusio
       },
     }),
   );
-  const session = { ready: false };
+  const session = { state: 'starting' } as const;
 
   await assert.rejects(
     () => parseRunnerResponse(response, session, '/tmp/runner.log'),
@@ -552,7 +524,7 @@ test('parseRunnerResponse preserves iOS AX snapshot failure code and hint', asyn
       },
     }),
   );
-  const session = { ready: true };
+  const session = { state: 'ready' } as const;
 
   await assert.rejects(
     () => parseRunnerResponse(response, session, '/tmp/runner.log'),
@@ -581,7 +553,7 @@ test('parseRunnerResponse preserves XCTest recorded failure code and hint', asyn
       },
     }),
   );
-  const session = { ready: true };
+  const session = { state: 'ready' } as const;
 
   await assert.rejects(
     () => parseRunnerResponse(response, session, '/tmp/runner.log'),
@@ -608,7 +580,7 @@ test('parseRunnerResponse maps RUNNER_BUSY to retriable command failure', async 
       },
     }),
   );
-  const session = { ready: true };
+  const session = { state: 'ready' } as const;
 
   await assert.rejects(
     () => parseRunnerResponse(response, session, '/tmp/runner.log'),
@@ -635,7 +607,7 @@ test('parseRunnerResponse preserves RUNNER_WEDGED as a fatal runner code', async
       },
     }),
   );
-  const session = { ready: true };
+  const session = { state: 'ready' } as const;
 
   await assert.rejects(
     () => parseRunnerResponse(response, session, '/tmp/runner.log'),
@@ -667,7 +639,7 @@ Thread 0 Crashed::  Dispatch queue: com.apple.main-thread
       },
     }),
   );
-  const session = { ready: true };
+  const session = { state: 'ready' } as const;
 
   await assert.rejects(
     () => parseRunnerResponse(response, session, logPath),
@@ -697,7 +669,7 @@ The application under test terminated unexpectedly.
       },
     }),
   );
-  const session = { ready: true };
+  const session = { state: 'ready' } as const;
 
   await assert.rejects(
     () => parseRunnerResponse(response, session, logPath),
@@ -726,7 +698,7 @@ AGENT_DEVICE_RUNNER_COMMAND_FAILED command=snapshot error=fetch failed
       },
     }),
   );
-  const session = { ready: true };
+  const session = { state: 'ready' } as const;
 
   await assert.rejects(
     () => parseRunnerResponse(response, session, logPath),
@@ -754,7 +726,7 @@ test('parseRunnerResponse hints when XCTest main-thread execution times out', as
       },
     }),
   );
-  const session = { ready: true };
+  const session = { state: 'ready' } as const;
 
   await assert.rejects(
     () => parseRunnerResponse(response, session, logPath),
@@ -782,14 +754,14 @@ test('parseRunnerResponse emits diagnostics for runner gesture fallbacks', async
       },
     }),
   );
-  const session = { ready: false };
+  const session = { state: 'starting' } as const;
   const diagnosticEvents: DiagnosticEventInput[] = [];
   appleRunnerTestHost.update({ emitDiagnostic: (event) => diagnosticEvents.push(event) });
 
   const data = await parseRunnerResponse(response, session, '/tmp/runner.log');
   assert.equal(data.gestureFallback, 'xctest-coordinate-drag');
 
-  assert.equal(session.ready, true);
+  assert.equal(session.state, 'ready');
   const diagnostics = JSON.stringify(diagnosticEvents);
   assert.match(diagnostics, /ios_runner_gesture_fallback/);
   assert.match(diagnostics, /xctest-coordinate-drag/);

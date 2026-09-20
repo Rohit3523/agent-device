@@ -8,10 +8,10 @@ import {
   type DeviceSelectionResult,
 } from '@agent-device/device-selection/device-selection-resolver';
 import type { BoundDeviceRuntime } from '@agent-device/contracts/platform-runtime';
-import type { SessionSurface } from '@agent-device/contracts/session';
+import type { SessionScope, SessionSurface } from '@agent-device/contracts/session';
 import type { DeviceInfo } from '@agent-device/kernel/device';
 import type { DaemonRequest, DaemonResponse } from '../../daemon-request.ts';
-import type { SessionScope, SessionState } from '../../session-state.ts';
+import type { SessionState } from '../../session-state.ts';
 import {
   abortAuthoringOnSecondOpen,
   armAuthoringOnOpen,
@@ -37,8 +37,11 @@ import {
   prepareOpenCommandDetails,
   type ResolvedOpenRuntimeHintPlan,
 } from './session-open-prepare.ts';
-import { errorResponse } from '../../response.ts';
-import { buildDeviceInUseBySessionError } from '../../session-recovery-hints.ts';
+import {
+  buildDeviceInUseBySessionError,
+  buildForeignWorkspaceSessionConflict,
+} from '../../session-recovery-hints.ts';
+import { describeOpenWaitForRefusal } from '../../open-device-contention-wait.ts';
 import {
   isImplicitSessionScopeConflict,
   resolveSessionScope,
@@ -64,6 +67,7 @@ import {
 } from '../../device-claim-conflict.ts';
 import { requireAllocatorHeldDeviceClaim } from '../../device-claim-allocator.ts';
 import { deviceClaimRuleForOwner } from '../../device-claim-rule.ts';
+import { errorResponse, type DaemonFailureResponse } from '@agent-device/kernel/contracts';
 
 type OpenTiming = {
   totalDurationMs?: number;
@@ -349,7 +353,7 @@ async function prepareOpenDispatchSession(params: {
   if (!beforeDispatch) return { type: 'session', session: existingSession };
   const provisionalSession = createProvisionalOpenDispatchSession(params);
   sessionStore.set(sessionName, provisionalSession);
-  const lifecycleResponse = await beforeDispatch(provisionalSession);
+  const lifecycleResponse = await beforeDispatch();
   if (lifecycleResponse && !lifecycleResponse.ok)
     return { type: 'response', response: lifecycleResponse };
   return { type: 'session', session: sessionStore.get(sessionName) ?? provisionalSession };
@@ -381,26 +385,26 @@ function createProvisionalOpenDispatchSession(params: {
   return provisionalSession;
 }
 
+/**
+ * The refusal an open gets when another session already holds the device. The wait an expired
+ * `--wait` budget spent is carried into the recovery text, because a caller that waited is not
+ * helped by being told to wait.
+ */
 function findNewSessionDeviceConflict(params: {
   req: DaemonRequest;
   device: DeviceInfo;
   sessionStore: SessionStore;
-}): DaemonResponse | undefined {
+}): DaemonFailureResponse | undefined {
   const { req, device, sessionStore } = params;
   const inUse = sessionStore.findByDevice(device.id);
   if (!inUse) return undefined;
+  // The wait the caller paid for belongs to `open` alone: an interaction that hits the same busy
+  // device cannot wait for it, and would be sent off with a flag its own command rejects.
+  const attempt = describeOpenWaitForRefusal(req);
   if (isImplicitSessionScopeConflict(req, inUse.session)) {
-    return errorResponse(
-      'DEVICE_IN_USE',
-      'Device is already in use by another workspace session.',
-      {
-        deviceId: device.id,
-        deviceName: device.name,
-        hint: 'Use a different device selector, wait for the other workspace to close its session, or run agent-device devices to choose another target.',
-      },
-    );
+    return buildForeignWorkspaceSessionConflict(inUse, device, attempt);
   }
-  return buildDeviceInUseBySessionError(inUse, device);
+  return buildDeviceInUseBySessionError(inUse, device, attempt);
 }
 
 async function acquireDeviceClaimForOwner(params: {
