@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Added (diff): `diff screenshot` accepts a JPEG baseline or current image. Both inputs had to be PNG,
+  so a capture exported by another tool had to be converted first and a HarmonyOS capture — which the
+  platform serves as JPEG under whatever name the command was given — could never be compared. Each
+  input is now decoded from its own bytes, so the container is sniffed and a `.png` name holding JPEG
+  decodes as JPEG. `png-transcode.ts` became `screenshot-image.ts`, the one owner of that sniffing for
+  both the decode and the provider transcode path, and the PNG worker gained a `decode-image` job that
+  answers pixels instead of PNG bytes. The `--out` diff image stays PNG, as do the crop, overlay, and
+  resize passes that rewrite a screenshot in place and could not survive a lossy container.
+
 - Added (maestro): `setPermissions` and `launchApp.permissions` support `all: allow|deny|unset`
   on iOS simulators and Android, with specific entries overriding `all`. Both accept a
   Maestro-style permissions map. Entries apply in order until the selected platform refuses one,
@@ -33,6 +42,12 @@
   none, and Android, HarmonyOS, Vega, Linux, web, tvOS, macOS, and visionOS each state their own refusal.
   Simulators run no Shortcuts or App Intents, so what a press triggers is verifiable only on a physical
   iPhone (#2699).
+- Changed (all): `home`, `app-switcher` and `action-button` are one system-button family in the
+  runtime contract. An owner without a button now refuses it with the family's hint (for example
+  `Android has no key event for this system button.`) rather than a per-button sentence, and a
+  Limrun or WebDriver session that is no longer active refuses `action-button` with that session's
+  own reason like every other cell; the command name still leads the `UNSUPPORTED_OPERATION`
+  message.
 - Fixed (android): `clipboard read` and `clipboard write` stop reporting success on a build whose
   clipboard service has no shell command. Android 16 (API 36) answers every `adb shell cmd clipboard …`
   with the framework default `Binder.handleShellCommand` — `No shell command implementation.` on
