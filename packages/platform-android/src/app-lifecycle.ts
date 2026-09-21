@@ -488,6 +488,26 @@ export async function closeAndroidApp(device: DeviceInfo, app: string): Promise<
   await waitForAndroidPackageStopped(device, resolved.value);
 }
 
+/**
+ * Maestro `killApp` on Android: system-initiated process death (`am kill`),
+ * which only reaps a backgrounded/cached process — unlike `closeAndroidApp`'s
+ * `am force-stop`. Callers background the app first (e.g. `pressKey: Home`).
+ */
+export async function killAndroidApp(device: DeviceInfo, app: string): Promise<void> {
+  const trimmed = app.trim();
+  if (trimmed.toLowerCase() === 'settings') {
+    await runAndroidShell(device, ['am', 'kill', 'com.android.settings']);
+    await waitForAndroidPackageStopped(device, 'com.android.settings');
+    return;
+  }
+  const resolved = await resolveAndroidApp(device, app);
+  if (resolved.type === 'intent') {
+    throw new AppError('INVALID_ARGS', 'Kill requires a package name, not an intent');
+  }
+  await runAndroidShell(device, ['am', 'kill', resolved.value]);
+  await waitForAndroidPackageStopped(device, resolved.value);
+}
+
 async function waitForAndroidPackageStopped(
   device: DeviceInfo,
   packageName: string,

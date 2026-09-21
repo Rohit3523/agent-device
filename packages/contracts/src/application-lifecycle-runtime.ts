@@ -178,6 +178,12 @@ export type CloseApplicationInput = Readonly<{
   surface: SessionSurface;
   /** A selector-only close establishes readiness inside its admitted lifecycle binding. */
   ensureReady?: boolean;
+  /**
+   * `kill` is Maestro `killApp` (system-initiated process death: `am kill` on
+   * Android); absent means `stop`. Owners without an `Interactor.kill` alias
+   * it to `close` in the shared dispatcher.
+   */
+  mode?: 'stop' | 'kill';
   execution: ApplicationLifecycleExecution;
 }>;
 

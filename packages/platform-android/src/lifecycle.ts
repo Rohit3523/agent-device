@@ -70,6 +70,7 @@ export function bindAndroidApplicationLifecycle(
         device,
         interactor: await binding.resolveInteractor(input.execution, input.appBundleId),
         positionals: input.positionals,
+        mode: input.mode,
       });
     },
     finalizeApplicationClose: async (input) => {

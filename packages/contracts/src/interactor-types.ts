@@ -290,6 +290,12 @@ export type Interactor = {
   ): Promise<void>;
   openDevice(): Promise<void>;
   close(app: string): Promise<void>;
+  /**
+   * System-initiated process death (Maestro `killApp`): on Android `am kill`
+   * rather than `am force-stop`. Owners without a lighter-weight kill leave
+   * it undefined and the shared close dispatcher falls back to `close(app)`.
+   */
+  kill?(app: string): Promise<void>;
   tap(x: number, y: number): Promise<Record<string, unknown> | void>;
   /** Complete point-press semantics for owners with fused series, alternate buttons, or surfaces. */
   pressPoint?(point: Point, options: PressPointOptions): Promise<Record<string, unknown> | void>;

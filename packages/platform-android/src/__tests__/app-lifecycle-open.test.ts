@@ -1,6 +1,6 @@
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
-import { closeAndroidApp, openAndroidApp } from '../app-lifecycle.ts';
+import { closeAndroidApp, killAndroidApp, openAndroidApp } from '../app-lifecycle.ts';
 import { withAndroidAdbProvider } from '../adb-executor.ts';
 import type { DeviceInfo } from '@agent-device/kernel/device';
 import { AppError } from '@agent-device/kernel/errors';
@@ -157,6 +157,47 @@ test('closeAndroidApp waits until package process exits after force-stop', async
     ['shell', 'am', 'force-stop', 'com.example.app'],
     ['shell', 'dumpsys', 'window', 'windows'],
     ['shell', 'pidof', 'com.example.app'],
+    ['shell', 'pidof', 'com.example.app'],
+    ['shell', 'pidof', 'com.example.app'],
+  ]);
+});
+
+test('killAndroidApp dispatches am kill rather than am force-stop', async () => {
+  const device: DeviceInfo = {
+    platform: 'android',
+    id: 'emulator-5554',
+    name: 'Pixel',
+    kind: 'emulator',
+    booted: true,
+  };
+  const calls: (readonly string[])[] = [];
+
+  await withAndroidAdbProvider(
+    {
+      exec: async (args) => {
+        calls.push(args);
+        if (args.join(' ') === 'shell dumpsys window windows') {
+          return {
+            stdout: 'mCurrentFocus=Window{43 u0 com.android.launcher/.Launcher}\n',
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+      reverse: {
+        ensure: async () => {},
+        remove: async () => {},
+        removeAllOwned: async () => {},
+      },
+    },
+    { serial: 'emulator-5554' },
+    async () => await killAndroidApp(device, 'com.example.app'),
+  );
+
+  assert.deepEqual(calls, [
+    ['shell', 'am', 'kill', 'com.example.app'],
+    ['shell', 'dumpsys', 'window', 'windows'],
     ['shell', 'pidof', 'com.example.app'],
     ['shell', 'pidof', 'com.example.app'],
   ]);
