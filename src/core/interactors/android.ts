@@ -11,6 +11,7 @@ import {
   getAndroidKeyboardState,
   handleAndroidAlert,
   homeAndroid,
+  killAndroidApp,
   longPressAndroid,
   openAndroidApp,
   openAndroidDevice,
@@ -69,6 +70,7 @@ export function createAndroidInteractor(
       }),
     openDevice: () => openAndroidDevice(device),
     close: (app) => closeAndroidApp(device, app),
+    kill: (app) => killAndroidApp(device, app),
     tap: (x, y) => pressAndroid(device, x, y),
     doubleTap: async (x, y) => {
       await pressAndroid(device, x, y);

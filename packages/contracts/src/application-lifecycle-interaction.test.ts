@@ -5,6 +5,7 @@ import type { OpenApplicationInput } from './application-lifecycle-runtime.ts';
 import {
   bindDirectApplicationLifecycle,
   bindLocalApplicationLifecycleInteractor,
+  invokeApplicationClose,
   invokeApplicationOpen,
 } from './application-lifecycle-interaction.ts';
 
@@ -89,6 +90,52 @@ test('direct lifecycle owners preserve the daemon runtime launch URL follow-up',
   });
   expect(calls[1]?.options).toMatchObject({ appBundleId: 'com.example.app' });
   expect(calls[1]?.options).toHaveProperty('launchArgs', undefined);
+});
+
+test('kill mode dispatches Interactor.kill when the owner implements it', async () => {
+  const calls: string[] = [];
+  const interactor: Interactor = {
+    ...interactorWithOpen(),
+    close: async (app) => {
+      calls.push(`close:${app}`);
+    },
+    kill: async (app) => {
+      calls.push(`kill:${app}`);
+    },
+  };
+
+  await invokeApplicationClose({
+    device: LINUX_DEVICE,
+    interactor,
+    positionals: ['com.example.app'],
+    mode: 'kill',
+  });
+
+  expect(calls).toEqual(['kill:com.example.app']);
+});
+
+test('kill mode falls back to close when the owner has no kill', async () => {
+  const calls: string[] = [];
+  const interactor: Interactor = {
+    ...interactorWithOpen(),
+    close: async (app) => {
+      calls.push(`close:${app}`);
+    },
+  };
+
+  await invokeApplicationClose({
+    device: LINUX_DEVICE,
+    interactor,
+    positionals: ['com.example.app'],
+    mode: 'kill',
+  });
+  await invokeApplicationClose({
+    device: LINUX_DEVICE,
+    interactor,
+    positionals: ['com.example.app'],
+  });
+
+  expect(calls).toEqual(['close:com.example.app', 'close:com.example.app']);
 });
 
 test.each([
