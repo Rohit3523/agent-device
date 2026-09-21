@@ -131,6 +131,19 @@ function dispatchMaestroRuntimeCommand<K extends MaestroCommandKind>(
   return handler(command, request, operations, context);
 }
 
+type MaestroAppTargetLifecycleCommand = MaestroCommandOf<'stopApp' | 'killApp' | 'clearState'>;
+
+/** Lifecycle commands carrying only an app target share one dispatch shape. */
+const MAESTRO_APP_TARGET_OPERATIONS: {
+  [K in MaestroAppTargetLifecycleCommand['kind']]: (
+    operations: MaestroRuntimeOperations,
+  ) => MaestroRuntimeOperations[K];
+} = {
+  stopApp: (operations) => operations.stopApp,
+  killApp: (operations) => operations.killApp,
+  clearState: (operations) => operations.clearState,
+};
+
 async function executeLifecycleCommand(
   command: MaestroLifecycleCommand,
   request: MaestroRuntimeRequest,
@@ -145,20 +158,6 @@ async function executeLifecycleCommand(
         context,
         'invalidate',
       );
-    case 'stopApp':
-      return await invokeOperation(
-        operations.stopApp,
-        { appId: command.appId ?? request.appId },
-        context,
-        'invalidate',
-      );
-    case 'killApp':
-      return await invokeOperation(
-        operations.killApp,
-        { appId: command.appId ?? request.appId },
-        context,
-        'invalidate',
-      );
     case 'setPermissions':
       return await invokeOperation(
         operations.setPermissions,
@@ -169,17 +168,17 @@ async function executeLifecycleCommand(
         context,
         'invalidate',
       );
-    case 'clearState':
-      return await invokeOperation(
-        operations.clearState,
-        { appId: command.appId ?? request.appId },
-        context,
-        'invalidate',
-      );
     case 'openLink':
       return await invokeOperation(
         operations.openLink,
         { link: command.link },
+        context,
+        'invalidate',
+      );
+    default:
+      return await invokeOperation(
+        MAESTRO_APP_TARGET_OPERATIONS[command.kind](operations),
+        { appId: command.appId ?? request.appId },
         context,
         'invalidate',
       );
