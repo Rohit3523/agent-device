@@ -492,20 +492,38 @@ export async function closeAndroidApp(device: DeviceInfo, app: string): Promise<
  * Maestro `killApp` on Android: system-initiated process death (`am kill`),
  * which only reaps a backgrounded/cached process — unlike `closeAndroidApp`'s
  * `am force-stop`. Callers background the app first (e.g. `pressKey: Home`).
+ * A foreground target fails loud naming the precondition, and a process that
+ * survives the kill fails rather than reading as success.
  */
 export async function killAndroidApp(device: DeviceInfo, app: string): Promise<void> {
   const trimmed = app.trim();
   if (trimmed.toLowerCase() === 'settings') {
-    await runAndroidShell(device, ['am', 'kill', 'com.android.settings']);
-    await waitForAndroidPackageStopped(device, 'com.android.settings');
+    await killAndroidPackage(device, 'com.android.settings');
     return;
   }
   const resolved = await resolveAndroidApp(device, app);
   if (resolved.type === 'intent') {
     throw new AppError('INVALID_ARGS', 'Kill requires a package name, not an intent');
   }
-  await runAndroidShell(device, ['am', 'kill', resolved.value]);
-  await waitForAndroidPackageStopped(device, resolved.value);
+  await killAndroidPackage(device, resolved.value);
+}
+
+async function killAndroidPackage(device: DeviceInfo, packageName: string): Promise<void> {
+  const foreground = await readAndroidForegroundApp(device);
+  if (foreground?.package === packageName) {
+    throw new AppError('COMMAND_FAILED', `Cannot kill foreground app ${packageName}`, {
+      reason: 'android-kill-requires-background-app',
+      hint: 'Background the app before killApp (for example pressKey: Home): am kill only reaps background processes.',
+    });
+  }
+  await runAndroidShell(device, ['am', 'kill', packageName]);
+  await waitForAndroidPackageStopped(device, packageName);
+  if (await isAndroidPackageProcessRunning(device, packageName)) {
+    throw new AppError('COMMAND_FAILED', `am kill did not stop ${packageName}`, {
+      reason: 'android-kill-requires-background-app',
+      hint: 'Background the app before killApp (for example pressKey: Home): am kill only reaps background processes.',
+    });
+  }
 }
 
 async function waitForAndroidPackageStopped(

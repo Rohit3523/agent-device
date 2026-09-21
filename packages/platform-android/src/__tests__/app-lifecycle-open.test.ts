@@ -196,11 +196,106 @@ test('killAndroidApp dispatches am kill rather than am force-stop', async () => 
   );
 
   assert.deepEqual(calls, [
+    ['shell', 'dumpsys', 'window', 'windows'],
     ['shell', 'am', 'kill', 'com.example.app'],
     ['shell', 'dumpsys', 'window', 'windows'],
     ['shell', 'pidof', 'com.example.app'],
     ['shell', 'pidof', 'com.example.app'],
+    ['shell', 'pidof', 'com.example.app'],
   ]);
+});
+
+test('killAndroidApp refuses a foreground target before killing', async () => {
+  const device: DeviceInfo = {
+    platform: 'android',
+    id: 'emulator-5554',
+    name: 'Pixel',
+    kind: 'emulator',
+    booted: true,
+  };
+  const calls: (readonly string[])[] = [];
+
+  await withAndroidAdbProvider(
+    {
+      exec: async (args) => {
+        calls.push(args);
+        if (args.join(' ') === 'shell dumpsys window windows') {
+          return {
+            stdout: 'mCurrentFocus=Window{42 u0 com.example.app/.MainActivity}\n',
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+      reverse: {
+        ensure: async () => {},
+        remove: async () => {},
+        removeAllOwned: async () => {},
+      },
+    },
+    { serial: 'emulator-5554' },
+    async () => {
+      await assertRejectsAppError(() => killAndroidApp(device, 'com.example.app'), {
+        code: 'COMMAND_FAILED',
+        hint: /Background the app before killApp/,
+      });
+      try {
+        await killAndroidApp(device, 'com.example.app');
+        assert.fail('expected killAndroidApp to reject for a foreground app');
+      } catch (error) {
+        assert.equal(
+          (error as InstanceType<typeof AppError>).details?.reason,
+          'android-kill-requires-background-app',
+        );
+      }
+    },
+  );
+
+  assert.deepEqual(calls, [
+    ['shell', 'dumpsys', 'window', 'windows'],
+    ['shell', 'dumpsys', 'window', 'windows'],
+  ]);
+});
+
+test('killAndroidApp fails when the process survives the kill', async () => {
+  const device: DeviceInfo = {
+    platform: 'android',
+    id: 'emulator-5554',
+    name: 'Pixel',
+    kind: 'emulator',
+    booted: true,
+  };
+
+  await withAndroidAdbProvider(
+    {
+      exec: async (args) => {
+        if (args.join(' ') === 'shell dumpsys window windows') {
+          return {
+            stdout: 'mCurrentFocus=Window{43 u0 com.android.launcher/.Launcher}\n',
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        if (args.join(' ') === 'shell pidof com.example.app') {
+          return { stdout: '12345\n', stderr: '', exitCode: 0 };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+      reverse: {
+        ensure: async () => {},
+        remove: async () => {},
+        removeAllOwned: async () => {},
+      },
+    },
+    { serial: 'emulator-5554' },
+    async () => {
+      await assertRejectsAppError(() => killAndroidApp(device, 'com.example.app'), {
+        code: 'COMMAND_FAILED',
+        hint: /Background the app before killApp/,
+      });
+    },
+  );
 });
 
 test('openAndroidApp ensures Android reverse before localhost deep link launch', async () => {
