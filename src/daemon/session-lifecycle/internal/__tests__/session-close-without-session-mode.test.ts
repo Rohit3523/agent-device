@@ -48,7 +48,13 @@ function makeSessionStore(): SessionStore {
 test('an app-only kill close with no stored session still carries mode kill to the platform close', async () => {
   const sessionStore = makeSessionStore();
   mockResolveTargetDevice.mockResolvedValue(ANDROID_DEVICE);
-  const seenModes: Array<unknown> = [];
+  const seenInputs: Array<{
+    mode?: unknown;
+    positionals?: unknown;
+    surface?: unknown;
+    outPath?: unknown;
+    ensureReady?: unknown;
+  }> = [];
   const baseBind = mockBindDeviceRuntime.getMockImplementation();
   mockBindDeviceRuntime.mockImplementationOnce(async (device, use) => {
     const binding = await baseBind!(device, use);
@@ -59,7 +65,7 @@ test('an app-only kill close with no stored session still carries mode kill to t
       operations: {
         ...binding.operations,
         closeApplication: async (input: Parameters<typeof innerClose>[0]) => {
-          seenModes.push(input.mode);
+          seenInputs.push(input);
         },
       },
     };
@@ -81,5 +87,10 @@ test('an app-only kill close with no stored session still carries mode kill to t
   });
 
   expect(response?.ok).toBe(true);
-  expect(seenModes).toEqual(['kill']);
+  expect(seenInputs).toHaveLength(1);
+  expect(seenInputs[0]?.mode).toBe('kill');
+  expect(seenInputs[0]?.positionals).toEqual(['com.example.app']);
+  expect(seenInputs[0]?.surface).toBe('app');
+  expect(seenInputs[0]?.outPath).toBeUndefined();
+  expect(seenInputs[0]?.ensureReady).toBe(true);
 });

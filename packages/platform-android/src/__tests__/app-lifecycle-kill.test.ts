@@ -136,7 +136,96 @@ test('killAndroidApp refuses a foreground target before killing', async () => {
     },
   );
 
-  assert.deepEqual(calls, [['shell', 'dumpsys', 'window', 'windows']]);
+  assert.deepEqual(calls, [
+    ['shell', 'dumpsys', 'window', 'windows'],
+    ['shell', 'dumpsys', 'window', 'windows'],
+  ]);
+});
+
+test('killAndroidApp proceeds when a stale same-app read settles to background', async () => {
+  const device: DeviceInfo = {
+    platform: 'android',
+    id: 'emulator-5554',
+    name: 'Pixel',
+    kind: 'emulator',
+    booted: true,
+  };
+  let foregroundReads = 0;
+  const calls: (readonly string[])[] = [];
+
+  await withAndroidAdbProvider(
+    {
+      exec: async (args) => {
+        calls.push(args);
+        if (args.join(' ') === 'shell dumpsys window windows') {
+          foregroundReads += 1;
+          // First read still names the target (stale `mCurrentFocus` right after
+          // `pressKey: Home`); later reads see the launcher so the kill completes.
+          const stdout =
+            foregroundReads === 1
+              ? 'mCurrentFocus=Window{42 u0 com.example.app/.MainActivity}\n'
+              : 'mCurrentFocus=Window{43 u0 com.android.launcher/.Launcher}\n';
+          return { stdout, stderr: '', exitCode: 0 };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+      reverse: {
+        ensure: async () => {},
+        remove: async () => {},
+        removeAllOwned: async () => {},
+      },
+    },
+    { serial: 'emulator-5554' },
+    async () => await killAndroidApp(device, 'com.example.app'),
+  );
+
+  assert.equal(foregroundReads >= 2, true);
+  assert.ok(calls.some((args) => args.join(' ') === 'shell am kill com.example.app'));
+});
+
+test('killAndroidApp fails closed when the confirmatory read cannot answer', async () => {
+  const device: DeviceInfo = {
+    platform: 'android',
+    id: 'emulator-5554',
+    name: 'Pixel',
+    kind: 'emulator',
+    booted: true,
+  };
+  let foregroundReads = 0;
+
+  await withAndroidAdbProvider(
+    {
+      exec: async (args) => {
+        if (args.join(' ') === 'shell dumpsys window windows') {
+          foregroundReads += 1;
+          if (foregroundReads === 1) {
+            return {
+              stdout: 'mCurrentFocus=Window{42 u0 com.example.app/.MainActivity}\n',
+              stderr: '',
+              exitCode: 0,
+            };
+          }
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+      reverse: {
+        ensure: async () => {},
+        remove: async () => {},
+        removeAllOwned: async () => {},
+      },
+    },
+    { serial: 'emulator-5554' },
+    async () => {
+      await assertRejectsAppError(() => killAndroidApp(device, 'com.example.app'), {
+        code: 'COMMAND_FAILED',
+        hint: /Background the app before killApp/,
+        details: { reason: 'android-kill-requires-background-app' },
+      });
+    },
+  );
+
+  assert.equal(foregroundReads, 2);
 });
 
 test('killAndroidApp fails when the process survives the kill', async () => {

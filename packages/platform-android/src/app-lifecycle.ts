@@ -563,23 +563,24 @@ async function readAndroidForegroundApp(device: DeviceInfo): Promise<AppStateRun
 }
 
 /**
- * `killAndroidPackage`'s precondition needs the opposite corroboration from
- * `waitForAndroidPackageProcessGone`'s "gone twice in a row counts": here a read naming a
- * different app is not enough on its own to trust "safe to kill". Live evidence (2026-09-25,
- * Android 16 emulator): immediately after `launchApp`, `dumpsys window`'s `mCurrentFocus` still
- * named the previous foreground app for one read while `dumpsys activity activities` already
- * showed the launched app resumed — `getAndroidAppState` takes whichever dump answers first, so
- * that stale window-focus read alone would have skipped the `android-kill-requires-background-app`
- * refusal against a target still genuinely in the foreground. A same-app read is trusted
- * immediately (refusing early is always safe); a different-app or unreadable read is corroborated
- * once after a short settle before this lets `killAndroidPackage` proceed.
+ * `killAndroidPackage`'s precondition corroborates either foreground read once:
+ * `mCurrentFocus` can lag one sample behind the resumed activity both after
+ * `launchApp` (stale different-app read would skip a required refusal) and
+ * after `pressKey: Home` (stale same-app read would spuriously refuse a legal
+ * kill). A confirmatory read after a short settle decides; an unreadable
+ * confirm keeps the first same-app refusal.
  */
 async function readAndroidForegroundAppSettled(
   device: DeviceInfo,
   packageName: string,
 ): Promise<AppStateRuntimeResult | null> {
   const first = await readAndroidForegroundApp(device);
-  if (first?.package === packageName) return first;
+  if (first?.package === packageName) {
+    await sleep(ANDROID_KILL_FOREGROUND_STABLE_MS);
+    const confirmed = await readAndroidForegroundApp(device);
+    if (confirmed && confirmed.package !== packageName) return confirmed;
+    return first;
+  }
   await sleep(ANDROID_KILL_FOREGROUND_STABLE_MS);
   return await readAndroidForegroundApp(device);
 }
