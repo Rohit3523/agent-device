@@ -335,7 +335,10 @@ test('an app-only kill close carries mode kill while a stop close carries none',
   sessionStore.set(sessionName, session);
   const seenModes: Array<unknown> = [];
   const baseBind = mockBindDeviceRuntime.getMockImplementation();
-  mockBindDeviceRuntime.mockImplementation(async (boundDevice, use) => {
+  const recordModes = async (
+    boundDevice: Parameters<NonNullable<typeof baseBind>>[0],
+    use: Parameters<NonNullable<typeof baseBind>>[1],
+  ) => {
     const binding = await baseBind!(boundDevice, use);
     const innerClose = binding.operations.closeApplication;
     if (!innerClose) return binding;
@@ -349,7 +352,9 @@ test('an app-only kill close carries mode kill while a stop close carries none',
         },
       },
     };
-  });
+  };
+  mockBindDeviceRuntime.mockImplementationOnce(recordModes);
+  mockBindDeviceRuntime.mockImplementationOnce(recordModes);
 
   const killed = await close({
     sessionName,

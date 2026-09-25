@@ -68,8 +68,11 @@ export function bindAndroidApplicationLifecycle(
         await ensureAndroidReady(host, device, { headless: false }, signal);
       }
       if (input.mode === 'kill') {
-        const target = input.positionals[0];
-        if (target) await killAndroidApp(device, target);
+        const target = input.positionals[0]?.trim() || input.appBundleId?.trim();
+        if (!target) {
+          throw new AppError('INVALID_ARGS', 'Kill requires an app target');
+        }
+        await killAndroidApp(device, target);
         return;
       }
       await invokeApplicationClose({

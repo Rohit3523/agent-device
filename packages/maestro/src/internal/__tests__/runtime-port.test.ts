@@ -184,7 +184,7 @@ describe('MaestroRuntimePort', () => {
       killApp: vi.fn(async (input, context) => record(calls, 'killApp', input, context)),
     });
     const program = parseMaestroProgram(
-      ['appId: com.example.checkout', '---', '- killApp: com.example.checkout', '- killApp'].join(
+      ['appId: com.example.checkout', '---', '- killApp: com.example.other', '- killApp'].join(
         '\n',
       ),
     );
@@ -193,7 +193,7 @@ describe('MaestroRuntimePort', () => {
 
     expect(result).toMatchObject({ executed: 2, skipped: 0 });
     expect(calls.map(({ kind }) => kind)).toEqual(['killApp', 'killApp']);
-    expect(calls[0]).toMatchObject({ input: { appId: 'com.example.checkout' } });
+    expect(calls[0]).toMatchObject({ input: { appId: 'com.example.other' } });
     expect(calls[1]).toMatchObject({ input: { appId: 'com.example.checkout' } });
   });
 

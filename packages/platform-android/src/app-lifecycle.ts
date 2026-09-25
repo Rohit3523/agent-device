@@ -516,6 +516,16 @@ async function killAndroidPackage(device: DeviceInfo, packageName: string): Prom
       hint: 'Background the app before killApp (for example pressKey: Home): am kill only reaps background processes.',
     });
   }
+  if (!foreground) {
+    throw new AppError(
+      'COMMAND_FAILED',
+      `Could not read foreground state before killing ${packageName}`,
+      {
+        reason: 'android-process-probe-unavailable',
+        hint: 'adb dumpsys did not answer; retry once the device is reachable.',
+      },
+    );
+  }
   await runAndroidShell(device, ['am', 'kill', packageName]);
   await waitForAndroidPackageStopped(device, packageName);
   if (await isAndroidPackageProcessRunning(device, packageName)) {
@@ -572,5 +582,15 @@ async function isAndroidPackageProcessRunning(
   const result = await runAndroidShell(device, ['pidof', packageName], {
     allowFailure: true,
   });
-  return (result.stdout ?? '').trim().length > 0;
+  if ((result.stdout ?? '').trim().length > 0) return true;
+  // `pidof` exits 1 with empty streams when no process matches; anything else
+  // with empty stdout is the probe itself failing (device unreachable, missing
+  // binary), which must not read as a reaped process.
+  if ((result.exitCode === 0 || result.exitCode === 1) && (result.stderr ?? '').trim() === '') {
+    return false;
+  }
+  throw new AppError('COMMAND_FAILED', `Could not read process state for ${packageName}`, {
+    reason: 'android-process-probe-unavailable',
+    hint: 'adb pidof did not answer; retry once the device is reachable.',
+  });
 }

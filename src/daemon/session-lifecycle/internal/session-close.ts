@@ -436,6 +436,7 @@ async function closeWithoutSession(params: {
     outPath: req.flags?.out,
     surface: 'app',
     ensureReady: true,
+    ...(req.internal?.killApp === true ? { mode: 'kill' as const } : {}),
     execution: applicationLifecycleExecutionFromRequest(req, logPath),
   });
   return {

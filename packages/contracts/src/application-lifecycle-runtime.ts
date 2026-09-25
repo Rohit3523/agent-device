@@ -181,8 +181,9 @@ export type CloseApplicationInput = Readonly<{
   /**
    * `kill` is Maestro `killApp` (system-initiated process death: `am kill` on
    * Android); absent means `stop`. Only the Android owner reads it and calls
-   * its own kill; owners that ignore it keep `force-stop`, which is the
-   * `stopApp` alias Maestro uses elsewhere (iOS included).
+   * its own kill, which prefers the positional target and falls back to the
+   * session app identity; owners that ignore it keep `force-stop`, which is
+   * the `stopApp` alias Maestro uses elsewhere (iOS included).
    */
   mode?: 'kill';
   execution: ApplicationLifecycleExecution;

@@ -239,23 +239,12 @@ test('killAndroidApp refuses a foreground target before killing', async () => {
       await assertRejectsAppError(() => killAndroidApp(device, 'com.example.app'), {
         code: 'COMMAND_FAILED',
         hint: /Background the app before killApp/,
+        details: { reason: 'android-kill-requires-background-app' },
       });
-      try {
-        await killAndroidApp(device, 'com.example.app');
-        assert.fail('expected killAndroidApp to reject for a foreground app');
-      } catch (error) {
-        assert.equal(
-          (error as InstanceType<typeof AppError>).details?.reason,
-          'android-kill-requires-background-app',
-        );
-      }
     },
   );
 
-  assert.deepEqual(calls, [
-    ['shell', 'dumpsys', 'window', 'windows'],
-    ['shell', 'dumpsys', 'window', 'windows'],
-  ]);
+  assert.deepEqual(calls, [['shell', 'dumpsys', 'window', 'windows']]);
 });
 
 test('killAndroidApp fails when the process survives the kill', async () => {
@@ -293,16 +282,125 @@ test('killAndroidApp fails when the process survives the kill', async () => {
       await assertRejectsAppError(() => killAndroidApp(device, 'com.example.app'), {
         code: 'COMMAND_FAILED',
         hint: /foreground service|force-stop/,
+        details: { reason: 'android-kill-process-survived' },
       });
-      try {
-        await killAndroidApp(device, 'com.example.app');
-        assert.fail('expected killAndroidApp to reject when the process survives');
-      } catch (error) {
-        assert.equal(
-          (error as InstanceType<typeof AppError>).details?.reason,
-          'android-kill-process-survived',
-        );
-      }
+    },
+  );
+});
+
+test('killAndroidApp fails when the liveness probe itself cannot answer', async () => {
+  const device: DeviceInfo = {
+    platform: 'android',
+    id: 'emulator-5554',
+    name: 'Pixel',
+    kind: 'emulator',
+    booted: true,
+  };
+
+  await withAndroidAdbProvider(
+    {
+      exec: async (args) => {
+        if (args.join(' ') === 'shell dumpsys window windows') {
+          return {
+            stdout: 'mCurrentFocus=Window{43 u0 com.android.launcher/.Launcher}\n',
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        if (args.join(' ') === 'shell pidof com.example.app') {
+          return { stdout: '', stderr: 'error: device offline\n', exitCode: 1 };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+      reverse: {
+        ensure: async () => {},
+        remove: async () => {},
+        removeAllOwned: async () => {},
+      },
+    },
+    { serial: 'emulator-5554' },
+    async () => {
+      await assertRejectsAppError(() => killAndroidApp(device, 'com.example.app'), {
+        code: 'COMMAND_FAILED',
+        hint: /pidof did not answer/,
+        details: { reason: 'android-process-probe-unavailable' },
+      });
+    },
+  );
+});
+
+test('killAndroidApp fails closed when the foreground probe cannot answer', async () => {
+  const device: DeviceInfo = {
+    platform: 'android',
+    id: 'emulator-5554',
+    name: 'Pixel',
+    kind: 'emulator',
+    booted: true,
+  };
+  const calls: (readonly string[])[] = [];
+
+  await withAndroidAdbProvider(
+    {
+      exec: async (args) => {
+        calls.push(args);
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+      reverse: {
+        ensure: async () => {},
+        remove: async () => {},
+        removeAllOwned: async () => {},
+      },
+    },
+    { serial: 'emulator-5554' },
+    async () => {
+      await assertRejectsAppError(() => killAndroidApp(device, 'com.example.app'), {
+        code: 'COMMAND_FAILED',
+        hint: /dumpsys did not answer/,
+        details: { reason: 'android-process-probe-unavailable' },
+      });
+    },
+  );
+
+  assert.ok(!calls.some((args) => args.join(' ').includes('am kill')));
+});
+
+test('closeAndroidApp fails when the liveness probe itself cannot answer', async () => {
+  const device: DeviceInfo = {
+    platform: 'android',
+    id: 'emulator-5554',
+    name: 'Pixel',
+    kind: 'emulator',
+    booted: true,
+  };
+
+  await withAndroidAdbProvider(
+    {
+      exec: async (args) => {
+        if (args.join(' ') === 'shell dumpsys window windows') {
+          return {
+            stdout: 'mCurrentFocus=Window{43 u0 com.android.launcher/.Launcher}\n',
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        if (args.join(' ') === 'shell pidof com.example.app') {
+          return { stdout: '', stderr: 'error: device offline\n', exitCode: 1 };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+      reverse: {
+        ensure: async () => {},
+        remove: async () => {},
+        removeAllOwned: async () => {},
+      },
+    },
+    { serial: 'emulator-5554' },
+    async () => {
+      await assertRejectsAppError(() => closeAndroidApp(device, 'com.example.app'), {
+        code: 'COMMAND_FAILED',
+        hint: /pidof did not answer/,
+        details: { reason: 'android-process-probe-unavailable' },
+      });
     },
   );
 });
