@@ -292,8 +292,17 @@ test('killAndroidApp fails when the process survives the kill', async () => {
     async () => {
       await assertRejectsAppError(() => killAndroidApp(device, 'com.example.app'), {
         code: 'COMMAND_FAILED',
-        hint: /Background the app before killApp/,
+        hint: /foreground service|force-stop/,
       });
+      try {
+        await killAndroidApp(device, 'com.example.app');
+        assert.fail('expected killAndroidApp to reject when the process survives');
+      } catch (error) {
+        assert.equal(
+          (error as InstanceType<typeof AppError>).details?.reason,
+          'android-kill-process-survived',
+        );
+      }
     },
   );
 });

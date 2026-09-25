@@ -520,8 +520,8 @@ async function killAndroidPackage(device: DeviceInfo, packageName: string): Prom
   await waitForAndroidPackageStopped(device, packageName);
   if (await isAndroidPackageProcessRunning(device, packageName)) {
     throw new AppError('COMMAND_FAILED', `am kill did not stop ${packageName}`, {
-      reason: 'android-kill-requires-background-app',
-      hint: 'Background the app before killApp (for example pressKey: Home): am kill only reaps background processes.',
+      reason: 'android-kill-process-survived',
+      hint: 'The app was backgrounded but its process survived am kill (for example a foreground service is still running): use stopApp (am force-stop) to terminate it.',
     });
   }
 }
