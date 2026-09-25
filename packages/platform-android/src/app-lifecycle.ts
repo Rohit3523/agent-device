@@ -22,7 +22,7 @@ import {
   parseAndroidLaunchablePackages,
   parseAndroidUserInstalledPackages,
 } from './app-parsers.ts';
-import { getAndroidAppState } from './window-state.ts';
+import { getAndroidAppState, getAndroidResumedActivity } from './window-state.ts';
 
 const ANDROID_LAUNCHER_CATEGORY = 'android.intent.category.LAUNCHER';
 const ANDROID_LEANBACK_CATEGORY = 'android.intent.category.LEANBACK_LAUNCHER';
@@ -33,7 +33,6 @@ const ANDROID_CLOSE_FOCUS_POLL_MS = 50;
 const ANDROID_CLOSE_PROCESS_TIMEOUT_MS = 2_000;
 const ANDROID_CLOSE_PROCESS_POLL_MS = 50;
 const ANDROID_CLOSE_PROCESS_GONE_STABLE_MS = 150;
-const ANDROID_KILL_FOREGROUND_STABLE_MS = 150;
 
 export async function listAndroidApps(
   device: DeviceInfo,
@@ -510,17 +509,17 @@ export async function killAndroidApp(device: DeviceInfo, app: string): Promise<v
 }
 
 async function killAndroidPackage(device: DeviceInfo, packageName: string): Promise<void> {
-  const foreground = await readAndroidForegroundAppSettled(device, packageName);
-  if (foreground?.package === packageName) {
+  const resumed = await readAndroidResumedActivity(device);
+  if (resumed?.package === packageName) {
     throw new AppError('COMMAND_FAILED', `Cannot kill foreground app ${packageName}`, {
       reason: 'android-kill-requires-background-app',
       hint: 'Background the app before killApp (for example pressKey: Home): am kill only reaps background processes.',
     });
   }
-  if (!foreground) {
+  if (!resumed) {
     throw new AppError(
       'COMMAND_FAILED',
-      `Could not read foreground state before killing ${packageName}`,
+      `Could not read resumed activity state before killing ${packageName}`,
       {
         reason: 'android-process-probe-unavailable',
         hint: 'adb dumpsys did not answer; retry once the device is reachable.',
@@ -562,27 +561,11 @@ async function readAndroidForegroundApp(device: DeviceInfo): Promise<AppStateRun
   return foreground.package ? foreground : null;
 }
 
-/**
- * `killAndroidPackage`'s precondition corroborates either foreground read once:
- * `mCurrentFocus` can lag one sample behind the resumed activity both after
- * `launchApp` (stale different-app read would skip a required refusal) and
- * after `pressKey: Home` (stale same-app read would spuriously refuse a legal
- * kill). A confirmatory read after a short settle decides; an unreadable
- * confirm keeps the first same-app refusal.
- */
-async function readAndroidForegroundAppSettled(
+async function readAndroidResumedActivity(
   device: DeviceInfo,
-  packageName: string,
 ): Promise<AppStateRuntimeResult | null> {
-  const first = await readAndroidForegroundApp(device);
-  if (first?.package === packageName) {
-    await sleep(ANDROID_KILL_FOREGROUND_STABLE_MS);
-    const confirmed = await readAndroidForegroundApp(device);
-    if (confirmed && confirmed.package !== packageName) return confirmed;
-    return first;
-  }
-  await sleep(ANDROID_KILL_FOREGROUND_STABLE_MS);
-  return await readAndroidForegroundApp(device);
+  const resumed = await getAndroidResumedActivity(device);
+  return resumed.package ? resumed : null;
 }
 
 async function waitForAndroidPackageProcessGone(
