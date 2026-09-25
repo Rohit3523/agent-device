@@ -175,13 +175,22 @@ async function executeLifecycleCommand(
         context,
         'invalidate',
       );
-    default:
+    case 'stopApp':
+    case 'killApp':
+    case 'clearState':
       return await invokeOperation(
         MAESTRO_APP_TARGET_OPERATIONS[command.kind](operations),
         { appId: command.appId ?? request.appId },
         context,
         'invalidate',
       );
+    default: {
+      const exhaustive: never = command;
+      throw new AppError(
+        'COMMAND_FAILED',
+        `Unsupported Maestro lifecycle command ${(exhaustive as { kind: string }).kind}.`,
+      );
+    }
   }
 }
 

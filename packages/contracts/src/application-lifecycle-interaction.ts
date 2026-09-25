@@ -370,18 +370,12 @@ export async function invokeApplicationClose(
     device: DeviceInfo;
     interactor: Interactor;
     positionals: readonly string[];
-    /** `kill` dispatches `Interactor.kill` with fallback to `close`; absent means `stop`. */
-    mode?: 'stop' | 'kill';
   }>,
 ): Promise<void> {
-  const { device, interactor, positionals, mode } = params;
+  const { device, interactor, positionals } = params;
   const app = positionals[0];
   if (!app) {
     if (device.platform === 'web') await interactor.close('');
-    return;
-  }
-  if (mode === 'kill' && interactor.kill) {
-    await interactor.kill(app);
     return;
   }
   await interactor.close(app);
