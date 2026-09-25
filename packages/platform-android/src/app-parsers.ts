@@ -16,6 +16,7 @@ export const ANDROID_FOCUSED_WINDOW_MARKER = 'mCurrentFocus=Window{';
 export const ANDROID_RESUMED_ACTIVITY_MARKERS = [
   'mResumedActivity:',
   'ResumedActivity:',
+  'topResumedActivity=',
 ] as const;
 
 /** The line prefixes a `dumpsys` dump uses to name the focused window or resumed activity. */
@@ -106,7 +107,10 @@ export function parseAndroidResumedActivity(
   for (const line of text.split('\n')) {
     for (const marker of ANDROID_RESUMED_ACTIVITY_MARKERS) {
       const markerIndex = line.indexOf(marker);
-      if (markerIndex === -1) continue;
+      // Unanchored match would also hit stale fields such as `mLastResumedActivity:`: a
+      // marker only counts at the start of a field, i.e. at line start or after whitespace.
+      if (markerIndex === -1 || (markerIndex > 0 && /\S/.test(line[markerIndex - 1] ?? '')))
+        continue;
       const component = line
         .slice(markerIndex + marker.length)
         .match(/\b([A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+)\/([A-Za-z0-9_.$]+)/);

@@ -21,7 +21,6 @@ const TARGET_FOCUS_DUMP = 'mCurrentFocus=Window{42 u0 com.example.app/.MainActiv
 
 const dumpsysActivityActivities = ['shell', 'dumpsys', 'activity', 'activities'].join(' ');
 const dumpsysWindowWindows = ['shell', 'dumpsys', 'window', 'windows'].join(' ');
-const amKillTarget = ['shell', 'am', 'kill', 'com.example.app'].join(' ');
 const pidofTarget = ['shell', 'pidof', 'com.example.app'].join(' ');
 
 const DEVICE: DeviceInfo = {
@@ -140,8 +139,17 @@ test('killAndroidApp proceeds when focus still names the target but the resumed 
   );
 
   // The AMS read comes first and the kill is dispatched even though WMS named the target.
-  assert.deepEqual(calls[0], ['shell', 'dumpsys', 'activity', 'activities']);
-  assert.ok(calls.some((args) => args.join(' ') === amKillTarget));
+  // The full sequence pins that no WMS read happens before the kill: the two window reads are
+  // the post-kill stop wait (TARGET focus once, then STALE).
+  assert.deepEqual(calls, [
+    ['shell', 'dumpsys', 'activity', 'activities'],
+    ['shell', 'am', 'kill', 'com.example.app'],
+    ['shell', 'dumpsys', 'window', 'windows'],
+    ['shell', 'dumpsys', 'window', 'windows'],
+    ['shell', 'pidof', 'com.example.app'],
+    ['shell', 'pidof', 'com.example.app'],
+    ['shell', 'pidof', 'com.example.app'],
+  ]);
 });
 
 test('killAndroidApp fails when the process survives the kill', async () => {
