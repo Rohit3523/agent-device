@@ -46,6 +46,12 @@ test('parseAndroidResumedActivity reads every resumed-marker shape', () => {
   );
   assert.deepEqual(
     parseAndroidResumedActivity(
+      '  ResumedActivity: ActivityRecord{99 u0 com.example.app/.MainActivity t7}\n',
+    ),
+    { package: 'com.example.app', activity: '.MainActivity' },
+  );
+  assert.deepEqual(
+    parseAndroidResumedActivity(
       '  topResumedActivity=ActivityRecord{99 u0 com.example.app/.MainActivity t7}\n',
     ),
     { package: 'com.example.app', activity: '.MainActivity' },
