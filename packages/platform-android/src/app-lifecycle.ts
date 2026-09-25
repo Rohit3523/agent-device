@@ -33,6 +33,7 @@ const ANDROID_CLOSE_FOCUS_POLL_MS = 50;
 const ANDROID_CLOSE_PROCESS_TIMEOUT_MS = 2_000;
 const ANDROID_CLOSE_PROCESS_POLL_MS = 50;
 const ANDROID_CLOSE_PROCESS_GONE_STABLE_MS = 150;
+const ANDROID_KILL_FOREGROUND_STABLE_MS = 150;
 
 export async function listAndroidApps(
   device: DeviceInfo,
@@ -509,7 +510,7 @@ export async function killAndroidApp(device: DeviceInfo, app: string): Promise<v
 }
 
 async function killAndroidPackage(device: DeviceInfo, packageName: string): Promise<void> {
-  const foreground = await readAndroidForegroundApp(device);
+  const foreground = await readAndroidForegroundAppSettled(device, packageName);
   if (foreground?.package === packageName) {
     throw new AppError('COMMAND_FAILED', `Cannot kill foreground app ${packageName}`, {
       reason: 'android-kill-requires-background-app',
@@ -559,6 +560,28 @@ async function waitForAndroidPackageNotForeground(
 async function readAndroidForegroundApp(device: DeviceInfo): Promise<AppStateRuntimeResult | null> {
   const foreground = await getAndroidAppState(device);
   return foreground.package ? foreground : null;
+}
+
+/**
+ * `killAndroidPackage`'s precondition needs the opposite corroboration from
+ * `waitForAndroidPackageProcessGone`'s "gone twice in a row counts": here a read naming a
+ * different app is not enough on its own to trust "safe to kill". Live evidence (2026-09-25,
+ * Android 16 emulator): immediately after `launchApp`, `dumpsys window`'s `mCurrentFocus` still
+ * named the previous foreground app for one read while `dumpsys activity activities` already
+ * showed the launched app resumed — `getAndroidAppState` takes whichever dump answers first, so
+ * that stale window-focus read alone would have skipped the `android-kill-requires-background-app`
+ * refusal against a target still genuinely in the foreground. A same-app read is trusted
+ * immediately (refusing early is always safe); a different-app or unreadable read is corroborated
+ * once after a short settle before this lets `killAndroidPackage` proceed.
+ */
+async function readAndroidForegroundAppSettled(
+  device: DeviceInfo,
+  packageName: string,
+): Promise<AppStateRuntimeResult | null> {
+  const first = await readAndroidForegroundApp(device);
+  if (first?.package === packageName) return first;
+  await sleep(ANDROID_KILL_FOREGROUND_STABLE_MS);
+  return await readAndroidForegroundApp(device);
 }
 
 async function waitForAndroidPackageProcessGone(

@@ -83,7 +83,6 @@ export async function listAndroidAppsWithAdb(
 export {
   closeAndroidApp,
   isAmStartError,
-  killAndroidApp,
   openAndroidApp,
   openAndroidDevice,
   parseAndroidLaunchComponent,
