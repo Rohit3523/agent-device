@@ -318,3 +318,37 @@ test('stop close resolves an interactor and closes', async () => {
   expect(closed).toEqual(['com.example.app']);
   expect(mockKillAndroidApp).not.toHaveBeenCalled();
 });
+
+test('kill mode falls back to the session app identity when no positional target exists', async () => {
+  const host = closeLifecycleHost(async () => {
+    throw new Error('kill must not resolve an interactor');
+  });
+  const lifecycle = bindAndroidApplicationLifecycle({
+    host,
+    device,
+    signal: new AbortController().signal,
+  });
+
+  await lifecycle.closeApplication(closeInput({ mode: 'kill', positionals: [] }));
+
+  expect(mockKillAndroidApp).toHaveBeenCalledOnce();
+  expect(mockKillAndroidApp).toHaveBeenCalledWith(device, 'com.example.app');
+});
+
+test('kill mode without any target fails loud instead of reading as success', async () => {
+  const host = closeLifecycleHost(async () => {
+    throw new Error('kill must not resolve an interactor');
+  });
+  const lifecycle = bindAndroidApplicationLifecycle({
+    host,
+    device,
+    signal: new AbortController().signal,
+  });
+
+  await expect(
+    lifecycle.closeApplication(
+      closeInput({ mode: 'kill', positionals: [], appBundleId: undefined }),
+    ),
+  ).rejects.toMatchObject({ code: 'INVALID_ARGS' });
+  expect(mockKillAndroidApp).not.toHaveBeenCalled();
+});
