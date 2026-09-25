@@ -346,9 +346,11 @@ test('an app-only kill close carries mode kill while a stop close carries none',
       ...binding,
       operations: {
         ...binding.operations,
+        // This test proves mode propagation through session-close dispatch. The
+        // platform effect itself stays stubbed: delegating would execute the
+        // real Android kill against a live adb device instead of a fake.
         closeApplication: async (input: Parameters<typeof innerClose>[0]) => {
           seenModes.push(input.mode);
-          return await innerClose(input);
         },
       },
     };
